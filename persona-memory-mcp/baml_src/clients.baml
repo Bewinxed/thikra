@@ -100,3 +100,16 @@ client<llm> OpenRouterHaiku {
     }
   }
 }
+
+client<llm> OpenRouterSonnet {
+  provider openai
+  options {
+    model "anthropic/claude-3.5-sonnet"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+    }
+  }
+}

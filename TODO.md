@@ -307,28 +307,37 @@ const openrouter = new OpenAI({
 // 7. Sensory preferences (all modalities)
 ```
 
-### 4.3 PersonalityMonitor
+### 4.3 PersonalityMonitor (Computational Phenotyping Approach)
 **References:**
 - Personality Change: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6732056/
+- Computational Phenotyping: `docs/computational-phenotyping-reference.md`
+- PersDyn Model: `docs/persdyn-model-reference.md`
 
 **Location:** `src/services/personality-monitor.service.ts`
 ```typescript
-// Tracks personality evolution over time
-// Detects drift from baseline
-// Identifies change drivers
-// Preserves core protected traits
-// Multi-modal consistency checking
+// Uses PersDyn three-parameter model:
+//   - Baseline: long-term stable personality center
+//   - Variability: allowed deviation from baseline
+//   - Attractor Force: pull back to baseline
+// Bayesian parameter estimation from behavioral data
+// No hardcoded thresholds - discovers patterns
+// Self-organizing personality states emerge naturally
+// Tracks uncertainty and confidence in estimates
+// Multi-modal personality expression tracking
 ```
 
-### 4.4 PersonaStateManager
+### 4.4 PersonaStateManager (Dynamic Systems Approach)
 **Location:** `src/services/persona-state.service.ts`
 ```typescript
-// Dynamic state tracking
-// State discovery from conversations
-// Visual state tracking (appearance changes)
-// Audio state patterns (voice modulation)
-// State change triggers and effects
-// Conscious vs unconscious states
+// Dynamic KV store with no predefined states
+// Auto-creates states on first reference by LLM
+// Uses phase space representation from computational phenotyping
+// Tracks state trajectories over time
+// Discovers attractor states and repeller states
+// State transitions modeled as dynamic system evolution
+// Captures both discrete and continuous state changes
+// Preserves state history for trajectory analysis
+// No hardcoded state types - fully emergent
 ```
 
 ## Phase 5: MCP Server Implementation 🔌 Low Priority

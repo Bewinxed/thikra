@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { config } from 'dotenv';
-import { EmbeddingService, type Embedding } from '../services/embedding.service';
+import { type Embedding, EmbeddingService } from '../services/embedding.service';
 
 config();
 

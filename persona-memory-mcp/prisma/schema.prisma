@@ -71,7 +71,7 @@ model Persona {
   speechPatterns       SpeechPattern[]
   linguisticMarkers    LinguisticMarker[]
   personalityTraits    PersonalityTrait[]
-  personalityEvolution PersonalityEvolution[]
+  // personalityEvolution moved to personalityParameters with PersDyn model
   lifeEvents           LifeEvent[]
   desires              Desire[]
   boundaries           Boundary[]
@@ -89,6 +89,10 @@ model Persona {
   accessories          Accessory[]
   bodyLanguageStates   BodyLanguageState[]
   somaticResponses     SomaticResponse[]
+  
+  // Personality monitoring (PersDyn model)
+  personalityObservations PersonalityObservation[]
+  personalityParameters   PersonalityParameter[]
 
 }
 
@@ -112,6 +116,7 @@ model Entity {
   sharedDesires        Desire[]            @relation("DesireSharedWith")
   sharedDreams         DreamAspiration[]   @relation("DreamSharedWith")
   toldLifeEvents       LifeEvent[]         @relation("LifeEventToldTo")
+  personalityObservations PersonalityObservation[]
 
 }
 
@@ -159,6 +164,7 @@ model EmotionalState {
   // Relations
   components EmotionalStateComponent[]
   memories   Memory[]
+  personalityObservations PersonalityObservation[]
 
 }
 
@@ -235,9 +241,10 @@ model Memory {
   consolidation       MemoryConsolidation?
   associationsFrom    MemoryAssociation[]      @relation("MemoryA")
   associationsTo      MemoryAssociation[]      @relation("MemoryB")
-  embodiedMemories    EmbodiedMemory[]
-  stateChangeTriggers PersonaStateChange[]
-  preferenceFormation Preference[]
+  embodiedMemories       EmbodiedMemory[]
+  stateChangeTriggers    PersonaStateChange[]
+  preferenceFormation    Preference[]
+  personalityObservations PersonalityObservation[]
 
   @@index([personaId, memoryType])
   @@index([personaId, occurredAt(sort: Desc)])
@@ -637,23 +644,8 @@ model PersonalityTrait {
 
 }
 
-// Track personality evolution over time
-// Ref: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6732056/
-model PersonalityEvolution {
-  id                  String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  personaId           String   @db.Uuid
-  snapshotTime        DateTime @default(now())
-  personalityProfile  Json     @db.JsonB
-  emotionalBaselines  Json     @db.JsonB
-  changesFromPrevious Json?    @db.JsonB
-  changeDrivers       String[] @default([])
-  consistencyScore    Float?   // 0-1
-  driftDetected       Boolean  @default(false)
-
-  // Relations
-  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
-
-}
+// REPLACED: Old PersonalityEvolution model removed in favor of PersDyn model
+// See PersonalityObservation, PersonalityParameter, and PersonalityParameterHistory below
 
 model LifeEvent {
   id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
@@ -909,4 +901,102 @@ model IdentityRelationship {
   // Relations
   persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
 
+}
+
+// ==================== PERSONALITY MONITORING (PERSDYN MODEL) ====================
+
+model PersonalityObservation {
+  id               String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId        String   @db.Uuid
+  traitDimension   String   @db.VarChar(100) // e.g., "openness", "emotional_intensity"
+  observedValue    Float    // Continuous value in trait space
+  
+  // Context fields (no JSON!)
+  situation             String?  @db.Text // What situation prompted this expression
+  interactionPartnerId  String?  @db.Uuid // Who they were interacting with
+  emotionalStateId      String?  @db.Uuid // Current emotional state
+  trigger               String?  @db.Text // What triggered this personality expression
+  
+  sourceMemoryId   String?  @db.Uuid
+  confidence       Float    @default(0.5) // 0-1 confidence in observation
+  observedAt       DateTime @default(now())
+  
+  // Relations
+  persona             Persona         @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  sourceMemory        Memory?         @relation(fields: [sourceMemoryId], references: [id])
+  interactionPartner  Entity?         @relation(fields: [interactionPartnerId], references: [id])
+  emotionalState      EmotionalState? @relation(fields: [emotionalStateId], references: [id])
+  evidence            PersonalityObservationEvidence[]
+  
+  @@index([personaId, traitDimension, observedAt])
+  @@index([personaId, situation])
+  @@index([personaId, interactionPartnerId])
+}
+
+// Evidence supporting personality observations
+model PersonalityObservationEvidence {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  observationId String   @db.Uuid
+  evidence      String   @db.Text // Direct quote or behavior
+  evidenceType  String   @db.VarChar(50) // "quote", "behavior", "reaction", etc.
+  
+  // Relations
+  observation PersonalityObservation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+  
+  @@index([observationId])
+}
+
+model PersonalityParameter {
+  id               String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId        String   @db.Uuid
+  traitDimension   String   @db.VarChar(100)
+  
+  // PersDyn three-parameter model
+  baseline         Float    // μ: Long-term stable center
+  variability      Float    // σ: Natural fluctuation range  
+  attractorForce   Float    // θ: Pull back to baseline strength
+  
+  // Uncertainty bounds (Bayesian)
+  baselineUncertainty      Float @default(1.0)
+  variabilityUncertainty   Float @default(1.0)
+  attractorUncertainty     Float @default(1.0)
+  
+  // Metadata
+  observationCount Int      @default(0)
+  lastUpdated      DateTime @default(now())
+  
+  // Relations
+  persona          Persona                      @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  parameterHistory PersonalityParameterHistory[]
+  
+  @@unique([personaId, traitDimension])
+  @@index([personaId])
+}
+
+// Track personality parameter evolution using PersDyn model
+// Ref: docs/persdyn-model-reference.md
+model PersonalityParameterHistory {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  parameterId   String   @db.Uuid
+  
+  // Historical parameter values
+  baseline      Float
+  variability   Float
+  attractorForce Float
+  
+  // What triggered this update
+  triggerType   String   @db.VarChar(50) // "new_observations", "drift_detected", etc.
+  
+  // Drift details (instead of JSON)
+  baselineDrift      Float? // How much baseline changed
+  variabilityDrift   Float? // How much variability changed  
+  attractorDrift     Float? // How much attractor force changed
+  driftSignificance  Float? // Overall significance score
+  
+  recordedAt    DateTime @default(now())
+  
+  // Relations
+  parameter PersonalityParameter @relation(fields: [parameterId], references: [id], onDelete: Cascade)
+  
+  @@index([parameterId, recordedAt])
 }
