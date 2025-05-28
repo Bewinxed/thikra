@@ -2,6 +2,7 @@ import type { Persona, PrismaClient } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { b } from '../../baml_client';
 import type { EmbeddingService } from './embedding.service';
+import { PromptCache } from '../utils/prompt-cache';
 
 // Multi-pass extraction result following TODO.md Phase 4
 // Types match BAML nullable outputs and convert to Prisma optional inputs
@@ -54,10 +55,14 @@ interface ExtractionResult {
 }
 
 export class PersonaBuilder {
+  private promptCache: PromptCache;
+
   constructor(
     private prisma: PrismaClient,
     private embeddingService: EmbeddingService,
-  ) {}
+  ) {
+    this.promptCache = new PromptCache();
+  }
 
   // Build persona from conversation history - main entry point
   async buildFromConversation(
@@ -104,23 +109,72 @@ export class PersonaBuilder {
     return persona;
   }
 
+  // Helper to cache BAML extraction calls
+  private async cachedExtract<T>(
+    functionName: string,
+    content: string,
+    extractFn: () => Promise<T>,
+  ): Promise<T> {
+    // Try to load from cache first
+    const cached = await this.promptCache.load(functionName, content);
+    if (cached) {
+      return JSON.parse(cached.response) as T;
+    }
+
+    // Execute the extraction
+    const result = await extractFn();
+
+    // Store in cache
+    await this.promptCache.store(
+      functionName,
+      content,
+      result,
+      undefined,
+    );
+
+    return result;
+  }
+
   // Multi-pass extraction following TODO.md specification
   private async multiPassExtraction(content: string): Promise<ExtractionResult> {
     try {
+      // Check cache first for all extractions
+      const cacheKey = `persona_builder_${content}`;
+      
       // Pass 1: Identity Components
-      const identityResult = await b.ExtractIdentityComponents(content);
+      const identityResult = await this.cachedExtract(
+        'ExtractIdentityComponents',
+        content,
+        () => b.ExtractIdentityComponents(content)
+      );
 
       // Pass 2: Physical Attributes
-      const physicalResult = await b.ExtractPhysicalAttributes(content);
+      const physicalResult = await this.cachedExtract(
+        'ExtractPhysicalAttributes',
+        content,
+        () => b.ExtractPhysicalAttributes(content)
+      );
 
       // Pass 3: Emotional Patterns
-      const emotionalResult = await b.ExtractEmotionalPatterns(content);
+      const emotionalResult = await this.cachedExtract(
+        'ExtractEmotionalPatterns',
+        content,
+        () => b.ExtractEmotionalPatterns(content)
+      );
 
       // Pass 4: Speech Patterns
-      const speechResult = await b.ExtractSpeechPatterns(content);
+      const speechResult = await this.cachedExtract(
+        'ExtractSpeechPatterns',
+        content,
+        () => b.ExtractSpeechPatterns(content)
+      );
 
       // Pass 5: Desires and Boundaries
-      const desiresResult = await b.ExtractDesiresAndBoundaries(content);
+      const desiresResult = await this.cachedExtract(
+        'ExtractDesiresAndBoundaries',
+        content,
+        () => b.ExtractDesiresAndBoundaries(content)
+      );
 
       return {
         identityComponents: identityResult.components.map((c) => ({

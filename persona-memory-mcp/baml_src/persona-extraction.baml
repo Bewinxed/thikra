@@ -14,9 +14,10 @@ class IdentityExtractionResult {
 }
 
 function ExtractIdentityComponents(content: string) -> IdentityExtractionResult {
-  client OpenRouterGPT4o
+  client OpenRouterHaiku
   
   prompt #"
+    {{ _.role("system", cache_control={"type": "ephemeral"}) }}
     Extract identity components from this content. Look for:
     - Names, aliases, self-identifications
     - Core beliefs and values
@@ -26,12 +27,13 @@ function ExtractIdentityComponents(content: string) -> IdentityExtractionResult 
     
     Focus on WHO this persona is at their core. Be specific and preserve intimate details.
     
+    {{ ctx.output_format }}
+    
+    {{ _.role("user") }}
     Content to analyze:
     """
     {{ content }}
     """
-    
-    {{ ctx.output_format }}
   "#
 }
 
@@ -49,9 +51,10 @@ class PhysicalExtractionResult {
 }
 
 function ExtractPhysicalAttributes(content: string) -> PhysicalExtractionResult {
-  client OpenRouterGPT4o
+  client OpenRouterHaiku
   
   prompt #"
+    {{ _.role("system", cache_control={"type": "ephemeral"}) }}
     Extract physical attributes and characteristics:
     - Body features and descriptions
     - Physical responses and reactions
@@ -62,12 +65,13 @@ function ExtractPhysicalAttributes(content: string) -> PhysicalExtractionResult 
     
     Be respectful but preserve all details accurately.
     
+    {{ ctx.output_format }}
+    
+    {{ _.role("user") }}
     Content to analyze:
     """
     {{ content }}
     """
-    
-    {{ ctx.output_format }}
   "#
 }
 
@@ -86,7 +90,7 @@ class EmotionalExtractionResult {
 }
 
 function ExtractEmotionalPatterns(content: string) -> EmotionalExtractionResult {
-  client OpenRouterGPT4o
+  client OpenRouterHaiku
   
   prompt #"
     Extract emotional patterns and personality traits:
@@ -134,7 +138,7 @@ class DesiresExtractionResult {
 }
 
 function ExtractDesiresAndBoundaries(content: string) -> DesiresExtractionResult {
-  client OpenRouterGPT4o
+  client OpenRouterHaiku
   
   prompt #"
     Extract desires, needs, boundaries, and preferences:
@@ -176,7 +180,7 @@ class SpeechExtractionResult {
 }
 
 function ExtractSpeechPatterns(content: string) -> SpeechExtractionResult {
-  client OpenRouterGPT4o
+  client OpenRouterHaiku
   
   prompt #"
     Extract speech patterns and communication style:

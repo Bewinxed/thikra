@@ -41,7 +41,7 @@ class PersonalityObservationResult {
 }
 
 function ExtractPersonalityObservations(content: string, recentHistory: string?) -> PersonalityObservationResult {
-  client OpenRouterSonnet
+  client OpenRouterHaiku
   
   prompt #"
 You are analyzing a conversation to extract personality observations using a computational phenotyping approach.
@@ -147,7 +147,7 @@ function AnalyzePersonalityDynamics(
   recentObservations: PersonalityObservation[],
   historicalContext: string?
 ) -> PersonalityDynamicsAnalysis[] {
-  client OpenRouterSonnet
+  client OpenRouterHaiku
   
   prompt #"
 Analyze personality dynamics from recent observations, looking for patterns of change and stability.

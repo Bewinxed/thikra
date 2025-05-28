@@ -41,7 +41,7 @@ class EmotionAnalysis {
 
 // Function to analyze emotions in text
 function AnalyzeEmotions(text: string) -> EmotionAnalysis {
-  client OpenRouterGPT4o
+  client OpenRouterHaiku
   
   prompt #"
     Analyze the emotional content of the following text. Detect all emotions present based on:
@@ -71,7 +71,7 @@ function AnalyzeEmotions(text: string) -> EmotionAnalysis {
 
 // Function to extract emotion patterns over time
 function ExtractEmotionalJourney(messages: string[]) -> EmotionalTransition[] {
-  client OpenRouterGPT4o
+  client OpenRouterHaiku
   
   prompt #"
     Analyze the emotional journey across these messages in chronological order.

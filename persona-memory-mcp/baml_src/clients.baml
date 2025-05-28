@@ -98,6 +98,7 @@ client<llm> OpenRouterHaiku {
       "HTTP-Referer" "https://persona-memory.local"
       "X-Title" "Persona Memory MCP"
     }
+    temperature 0.3  // Lower temperature for more consistent extraction
   }
 }
 

@@ -107,6 +107,42 @@ export class PromptCache {
   }
 
   /**
+   * Load a cached prompt/response pair
+   */
+  async load(functionName: string, prompt: string): Promise<PromptCacheEntry | null> {
+    await this.init();
+
+    const filename = this.generateFilename(functionName, prompt);
+    const filepath = path.join(this.cacheDir, filename);
+
+    try {
+      const content = await fs.readFile(filepath, 'utf-8');
+      
+      // Parse the markdown file to extract the JSON response
+      const responseMatch = content.match(/```json\n([\s\S]*?)\n```/);
+      if (!responseMatch) {
+        return null;
+      }
+
+      const response = JSON.parse(responseMatch[1]);
+      console.log(`[PromptCache] Cache hit for ${functionName}`);
+      
+      return {
+        timestamp: new Date().toISOString(),
+        functionName,
+        prompt,
+        response: responseMatch[1],
+      };
+    } catch (error) {
+      // Cache miss is normal, not an error
+      if ((error as any).code !== 'ENOENT') {
+        console.error('Failed to load prompt cache entry:', error);
+      }
+      return null;
+    }
+  }
+
+  /**
    * List all cached entries
    */
   async list(): Promise<string[]> {

@@ -17,6 +17,7 @@ import type {
 } from '../../baml_client/types';
 import type { EmbeddingService } from './embedding.service';
 import type { MemoryGraphService } from './memory-graph.service';
+import { PromptCache } from '../utils/prompt-cache';
 
 // Define types that aren't in the schema
 type MessageRole = 'user' | 'assistant' | 'system';
@@ -58,12 +59,14 @@ interface DetectedEmotionWithId extends DetectedEmotion {
 
 export class MemoryFormationService {
   private emotionCache: Map<string, EmotionType> = new Map();
+  private promptCache: PromptCache;
 
   constructor(
     private prisma: PrismaClient,
     private embeddingService: EmbeddingService,
     private memoryGraph: MemoryGraphService,
   ) {
+    this.promptCache = new PromptCache();
     this.loadEmotionTypes();
   }
 
@@ -816,8 +819,19 @@ export class MemoryFormationService {
    */
   private async detectEmotions(text: string): Promise<EmotionAnalysis> {
     try {
-      // Use BAML function to analyze emotions
-      const analysis = await b.AnalyzeEmotions(text);
+      // Try cache first
+      const cached = await this.promptCache.load('AnalyzeEmotions', text);
+      let analysis: EmotionAnalysis;
+      
+      if (cached) {
+        analysis = JSON.parse(cached.response) as EmotionAnalysis;
+      } else {
+        // Use BAML function to analyze emotions
+        analysis = await b.AnalyzeEmotions(text);
+        
+        // Store in cache
+        await this.promptCache.store('AnalyzeEmotions', text, analysis, undefined);
+      }
 
       // Map detected emotions to database IDs
       const enrichedAnalysis = await this.enrichEmotionAnalysis(analysis);
@@ -921,7 +935,16 @@ export class MemoryFormationService {
    */
   private async estimatePADFromContext(emotionName: string, context: string): Promise<PADValues> {
     try {
-      return await b.EstimatePADValues(emotionName, context);
+      const cacheKey = `${emotionName}|${context}`;
+      const cached = await this.promptCache.load('EstimatePADValues', cacheKey);
+      
+      if (cached) {
+        return JSON.parse(cached.response) as PADValues;
+      }
+      
+      const result = await b.EstimatePADValues(emotionName, context);
+      await this.promptCache.store('EstimatePADValues', cacheKey, result, undefined);
+      return result;
     } catch (error) {
       console.error('Error estimating PAD values:', error);
       // Default neutral values
