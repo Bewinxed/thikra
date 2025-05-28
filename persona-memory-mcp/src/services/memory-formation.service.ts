@@ -15,9 +15,9 @@ import type {
   EmotionalTransition,
   PADValues,
 } from '../../baml_client/types';
+import { PromptCache } from '../utils/prompt-cache';
 import type { EmbeddingService } from './embedding.service';
 import type { MemoryGraphService } from './memory-graph.service';
-import { PromptCache } from '../utils/prompt-cache';
 
 // Define types that aren't in the schema
 type MessageRole = 'user' | 'assistant' | 'system';
@@ -164,9 +164,9 @@ export class MemoryFormationService {
     // Generate embedding for content
     const embedding = await this.embeddingService.embed(content);
 
-    // Detect and create emotional state if content is text
+    // Detect and create emotional state if content is text and substantial enough
     let emotionalStateId: string | null = null;
-    if (contentType === 'text') {
+    if (contentType === 'text' && this.hasEmotionalContent(content)) {
       const emotionAnalysis = await this.detectEmotions(content);
       if (
         emotionAnalysis.primaryEmotions.length > 0 ||
@@ -215,6 +215,15 @@ export class MemoryFormationService {
         "searchVector" = to_tsvector('english', ${searchVector})
       WHERE id = ${memory.id}::uuid
     `;
+
+    // Create consolidation record for memory tracking
+    await this.prisma.memoryConsolidation.create({
+      data: {
+        memoryId: memory.id,
+        // initialStrength defaults to 1.0 in schema
+        currentStrength: significance,
+      },
+    });
 
     // Create associations with related memories
     await this.memoryGraph.buildAssociationsForMemory(memory.id);
@@ -815,6 +824,36 @@ export class MemoryFormationService {
   }
 
   /**
+   * Check if content is substantial enough to warrant emotional analysis
+   */
+  private hasEmotionalContent(content: string): boolean {
+    // Skip very short content
+    if (content.length < 10) return false;
+    
+    // Skip generic system messages
+    const lowerContent = content.toLowerCase().trim();
+    const genericMessages = [
+      'context updated',
+      'ok', 
+      'yes', 
+      'no', 
+      'done',
+      'loading',
+      'error',
+      'success',
+      'saved',
+      'updated'
+    ];
+    
+    if (genericMessages.includes(lowerContent)) return false;
+    
+    // Need at least 3 words for meaningful emotional analysis
+    if (content.trim().split(/\s+/).length < 3) return false;
+    
+    return true;
+  }
+
+  /**
    * Detect emotions in text using LLM (integrated from emotion-detector service)
    */
   private async detectEmotions(text: string): Promise<EmotionAnalysis> {
@@ -822,13 +861,13 @@ export class MemoryFormationService {
       // Try cache first
       const cached = await this.promptCache.load('AnalyzeEmotions', text);
       let analysis: EmotionAnalysis;
-      
+
       if (cached) {
         analysis = JSON.parse(cached.response) as EmotionAnalysis;
       } else {
         // Use BAML function to analyze emotions
         analysis = await b.AnalyzeEmotions(text);
-        
+
         // Store in cache
         await this.promptCache.store('AnalyzeEmotions', text, analysis, undefined);
       }
@@ -937,11 +976,11 @@ export class MemoryFormationService {
     try {
       const cacheKey = `${emotionName}|${context}`;
       const cached = await this.promptCache.load('EstimatePADValues', cacheKey);
-      
+
       if (cached) {
         return JSON.parse(cached.response) as PADValues;
       }
-      
+
       const result = await b.EstimatePADValues(emotionName, context);
       await this.promptCache.store('EstimatePADValues', cacheKey, result, undefined);
       return result;

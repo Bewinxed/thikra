@@ -132,9 +132,19 @@ class Preference {
   reason string? @description("Why they have this preference")
 }
 
+class Boundary {
+  boundaryTypeId int? @description("Optional boundary type ID if it fits standard categories")
+  boundaryDescription string @description("Description of the boundary or limit")
+  firmness float @description("0.0 to 1.0, how firm this boundary is")
+  appliesToEntityId string? @description("Entity ID this boundary applies to, if specific")
+  contextSpecific string? @description("Context where this boundary applies")
+  violationResponse string? @description("How they respond when boundary is violated")
+}
+
 class DesiresExtractionResult {
   desires Desire[] @description("Extracted desires and needs")
   preferences Preference[] @description("Extracted preferences")
+  boundaries Boundary[] @description("Extracted boundaries and limits")
 }
 
 function ExtractDesiresAndBoundaries(content: string) -> DesiresExtractionResult {

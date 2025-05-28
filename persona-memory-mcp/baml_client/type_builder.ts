@@ -22,11 +22,13 @@ import { DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME } from "./
 export default class TypeBuilder {
     private tb: _TypeBuilder;
     
+    Boundary: ClassViewer<'Boundary', "boundaryTypeId" | "boundaryDescription" | "firmness" | "appliesToEntityId" | "contextSpecific" | "violationResponse">;
+    
     CurrentStateAnalysis: ClassViewer<'CurrentStateAnalysis', "observedValue" | "distanceFromTypical" | "returningToBaseline">;
     
     Desire: ClassViewer<'Desire', "desireCategoryId" | "desireDescription" | "currentIntensity" | "fulfillmentLevel" | "fulfillmentConditions" | "isSecret">;
     
-    DesiresExtractionResult: ClassViewer<'DesiresExtractionResult', "desires" | "preferences">;
+    DesiresExtractionResult: ClassViewer<'DesiresExtractionResult', "desires" | "preferences" | "boundaries">;
     
     DetectedEmotion: ClassViewer<'DetectedEmotion', "emotionName" | "intensity" | "confidence" | "triggers" | "context" | "isCustom">;
     
@@ -81,13 +83,17 @@ export default class TypeBuilder {
     constructor() {
         this.tb = new _TypeBuilder({
           classes: new Set([
-            "CurrentStateAnalysis","Desire","DesiresExtractionResult","DetectedEmotion","EmergingPattern","EmotionAnalysis","EmotionMetadata","EmotionalExtractionResult","EmotionalTransition","EventTriggeredChange","IdentityComponent","IdentityExtractionResult","PADValues","PersonalityContext","PersonalityDynamicsAnalysis","PersonalityObservation","PersonalityObservationResult","PersonalityTrait","PhysicalAttribute","PhysicalExtractionResult","Preference","Resume","SpeechExtractionResult","SpeechPattern","StateDeviation","TemporalDynamics","VariabilityPattern",
+            "Boundary","CurrentStateAnalysis","Desire","DesiresExtractionResult","DetectedEmotion","EmergingPattern","EmotionAnalysis","EmotionMetadata","EmotionalExtractionResult","EmotionalTransition","EventTriggeredChange","IdentityComponent","IdentityExtractionResult","PADValues","PersonalityContext","PersonalityDynamicsAnalysis","PersonalityObservation","PersonalityObservationResult","PersonalityTrait","PhysicalAttribute","PhysicalExtractionResult","Preference","Resume","SpeechExtractionResult","SpeechPattern","StateDeviation","TemporalDynamics","VariabilityPattern",
           ]),
           enums: new Set([
             
           ]),
           runtime: DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME
         });
+        
+        this.Boundary = this.tb.classViewer("Boundary", [
+          "boundaryTypeId","boundaryDescription","firmness","appliesToEntityId","contextSpecific","violationResponse",
+        ]);
         
         this.CurrentStateAnalysis = this.tb.classViewer("CurrentStateAnalysis", [
           "observedValue","distanceFromTypical","returningToBaseline",
@@ -98,7 +104,7 @@ export default class TypeBuilder {
         ]);
         
         this.DesiresExtractionResult = this.tb.classViewer("DesiresExtractionResult", [
-          "desires","preferences",
+          "desires","preferences","boundaries",
         ]);
         
         this.DetectedEmotion = this.tb.classViewer("DetectedEmotion", [

@@ -5,6 +5,7 @@ import type {
   MemoryAssociation,
   PrismaClient,
 } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 // pgvector embedding type - stored as vector(768) but accessed as number[] or string
 type Embedding = number[] | string | null;
@@ -44,7 +45,19 @@ export class MemoryGraphService {
   async buildAssociationsForMemory(memoryId: string): Promise<void> {
     // Get memory with raw query to include embedding field
     const [memory] = await this.prisma.$queryRaw<Array<MemoryWithEmotionalState>>`
-      SELECT m.*, 
+      SELECT m.id, 
+             m."personaId",
+             m."memoryType",
+             m."contentType",
+             m."searchText",
+             m."emotionalStateId",
+             m."sourceEntityId",
+             m."significanceScore",
+             m."occurredAt",
+             m."createdAt",
+             m."lastAccessed",
+             m.tags,
+             m.channel,
              m.embedding::text as embedding,
              CASE 
                WHEN es.id IS NOT NULL THEN json_build_object(
@@ -126,8 +139,8 @@ export class MemoryGraphService {
 
     const similarMemories = await this.prisma.$queryRaw<Array<{ id: string; similarity: number }>>`
       SELECT id, (embedding <=> ${embeddingValue}::vector) as similarity
-      FROM memories 
-      WHERE persona_id = ${memory.personaId}::uuid 
+      FROM "Memory" 
+      WHERE "personaId" = ${memory.personaId}::uuid 
         AND id != ${memory.id}::uuid
         AND embedding IS NOT NULL
       ORDER BY embedding <=> ${embeddingValue}::vector
@@ -379,47 +392,47 @@ export class MemoryGraphService {
         -- Base case: direct associations
         SELECT 
           CASE 
-            WHEN memory_a = ${startMemoryId}::uuid THEN memory_b::text
-            ELSE memory_a::text
+            WHEN "memoryA" = ${startMemoryId}::uuid THEN "memoryB"::text
+            ELSE "memoryA"::text
           END as current_memory,
           ARRAY[${startMemoryId}::text, 
             CASE 
-              WHEN memory_a = ${startMemoryId}::uuid THEN memory_b::text
-              ELSE memory_a::text
+              WHEN "memoryA" = ${startMemoryId}::uuid THEN "memoryB"::text
+              ELSE "memoryA"::text
             END
           ] as path,
-          association_strength as strength,
-          ARRAY[association_type] as types,
+          "associationStrength" as strength,
+          ARRAY["associationType"]::varchar[] as types,
           1 as depth
-        FROM memory_associations
-        WHERE (memory_a = ${startMemoryId}::uuid OR memory_b = ${startMemoryId}::uuid)
-          AND association_strength >= 0.3
+        FROM "MemoryAssociation"
+        WHERE ("memoryA" = ${startMemoryId}::uuid OR "memoryB" = ${startMemoryId}::uuid)
+          AND "associationStrength" >= 0.3
         
         UNION ALL
         
         -- Recursive case: extend paths
         SELECT 
           CASE 
-            WHEN ma.memory_a = mp.current_memory::uuid THEN ma.memory_b::text
-            ELSE ma.memory_a::text
+            WHEN ma."memoryA" = mp.current_memory::uuid THEN ma."memoryB"::text
+            ELSE ma."memoryA"::text
           END as current_memory,
           mp.path || CASE 
-            WHEN ma.memory_a = mp.current_memory::uuid THEN ma.memory_b::text
-            ELSE ma.memory_a::text
+            WHEN ma."memoryA" = mp.current_memory::uuid THEN ma."memoryB"::text
+            ELSE ma."memoryA"::text
           END,
-          mp.strength * ma.association_strength as strength,
-          mp.types || ma.association_type,
+          mp.strength * ma."associationStrength" as strength,
+          mp.types || ma."associationType",
           mp.depth + 1
         FROM memory_paths mp
-        JOIN memory_associations ma ON (
-          ma.memory_a = mp.current_memory::uuid OR ma.memory_b = mp.current_memory::uuid
+        JOIN "MemoryAssociation" ma ON (
+          ma."memoryA" = mp.current_memory::uuid OR ma."memoryB" = mp.current_memory::uuid
         )
         WHERE mp.depth < ${maxDepth}
           AND NOT (CASE 
-            WHEN ma.memory_a = mp.current_memory::uuid THEN ma.memory_b::text
-            ELSE ma.memory_a::text
+            WHEN ma."memoryA" = mp.current_memory::uuid THEN ma."memoryB"::text
+            ELSE ma."memoryA"::text
           END = ANY(mp.path))
-          AND ma.association_strength >= 0.3
+          AND ma."associationStrength" >= 0.3
       )
       SELECT array_to_string(path, ',') as path, strength, array_to_string(types, ',') as types
       FROM memory_paths 
@@ -465,33 +478,33 @@ export class MemoryGraphService {
           m.id as cluster_root,
           1 as cluster_size,
           m.id::text as memory_path,
-          1.0 as path_strength
-        FROM memories m
-        WHERE m.persona_id = ${personaId}::uuid
+          1.0::double precision as path_strength
+        FROM "Memory" m
+        WHERE m."personaId" = ${personaId}::uuid
         
         UNION ALL
         
         -- Expand clusters through strong associations
         SELECT 
           CASE 
-            WHEN ma.memory_a = mc.memory_id THEN ma.memory_b
-            ELSE ma.memory_a
+            WHEN ma."memoryA" = mc.memory_id THEN ma."memoryB"
+            ELSE ma."memoryA"
           END as memory_id,
           mc.cluster_root,
           mc.cluster_size + 1,
           mc.memory_path || ',' || CASE 
-            WHEN ma.memory_a = mc.memory_id THEN ma.memory_b
-            ELSE ma.memory_a
+            WHEN ma."memoryA" = mc.memory_id THEN ma."memoryB"
+            ELSE ma."memoryA"
           END,
-          mc.path_strength * ma.association_strength
+          mc.path_strength * ma."associationStrength"
         FROM memory_clusters mc
-        JOIN memory_associations ma ON 
-          (ma.memory_a = mc.memory_id OR ma.memory_b = mc.memory_id)
-        WHERE ma.association_strength >= 0.6
+        JOIN "MemoryAssociation" ma ON 
+          (ma."memoryA" = mc.memory_id OR ma."memoryB" = mc.memory_id)
+        WHERE ma."associationStrength" >= 0.6
           AND mc.cluster_size < 10
           AND mc.memory_path NOT LIKE '%' || CASE 
-            WHEN ma.memory_a = mc.memory_id THEN ma.memory_b
-            ELSE ma.memory_a
+            WHEN ma."memoryA" = mc.memory_id THEN ma."memoryB"
+            ELSE ma."memoryA"
           END || '%'
       ),
       cluster_groups AS (
@@ -550,31 +563,31 @@ export class MemoryGraphService {
         SELECT 
           m1.id as start_memory,
           m2.id as end_memory,
-          m1.occurred_at as start_time,
-          m2.occurred_at as end_time,
-          EXTRACT(EPOCH FROM (m2.occurred_at - m1.occurred_at)) / 3600 as duration_hours,
+          m1."occurredAt" as start_time,
+          m2."occurredAt" as end_time,
+          EXTRACT(EPOCH FROM (m2."occurredAt" - m1."occurredAt")) / 3600 as duration_hours,
           array[m1.id, m2.id]::text[] as chain
         FROM "Memory" m1
         JOIN "MemoryAssociation" ma ON m1.id = ma."memoryA"
         JOIN "Memory" m2 ON ma."memoryB" = m2.id
         WHERE m1."personaId" = ${personaId}::uuid
           AND m2."personaId" = ${personaId}::uuid
-          AND ma.association_type = 'temporal'
-          AND m1.occurred_at < m2.occurred_at
-          AND EXTRACT(EPOCH FROM (m2.occurred_at - m1.occurred_at)) / 3600 < 24 -- Within 24 hours
+          AND ma."associationType" = 'temporal'
+          AND m1."occurredAt" < m2."occurredAt"
+          AND EXTRACT(EPOCH FROM (m2."occurredAt" - m1."occurredAt")) / 3600 < 24 -- Within 24 hours
       ),
       extended_chains AS (
         SELECT 
           tc.*,
           m3.id as next_memory,
-          m3.occurred_at as next_time,
+          m3."occurredAt" as next_time,
           array_append(tc.chain, m3.id::text) as extended_chain
         FROM temporal_chains tc
         JOIN "MemoryAssociation" ma2 ON tc.end_memory = ma2."memoryA"
         JOIN "Memory" m3 ON ma2."memoryB" = m3.id
         WHERE ma2."associationType" = 'temporal'
-          AND m3.occurred_at > tc.end_time
-          AND EXTRACT(EPOCH FROM (m3.occurred_at - tc.end_time)) / 3600 < 24
+          AND m3."occurredAt" > tc.end_time
+          AND EXTRACT(EPOCH FROM (m3."occurredAt" - tc.end_time)) / 3600 < 24
       )
       SELECT 
         ROW_NUMBER() OVER (ORDER BY array_length(chain, 1) DESC, start_time) as chain_id,
@@ -617,12 +630,12 @@ export class MemoryGraphService {
       emotionalIntensity: number;
     }>
   > {
-    const whereClause = emotionName ? `AND et.emotion_name = ${emotionName}` : '';
+    const whereClause = emotionName ? Prisma.sql`AND et."emotionName" = ${emotionName}` : Prisma.empty;
 
     const networks = await this.prisma.$queryRaw<
       Array<{
         network_id: number;
-        emotion_name: string;
+        emotionName: string;
         memory_ids: string;
         avg_intensity: number;
       }>
@@ -630,33 +643,33 @@ export class MemoryGraphService {
       WITH emotion_memories AS (
         SELECT 
           m.id as memory_id,
-          et.emotion_name,
+          et."emotionName",
           esc.intensity,
-          et.primary_emotion
-        FROM memories m
-        JOIN emotional_states es ON m.emotional_state_id = es.id
-        JOIN emotional_state_components esc ON es.id = esc.emotional_state_id
-        JOIN emotion_types et ON esc.emotion_type_id = et.id
-        WHERE m.persona_id = ${personaId}::uuid
+          et."primaryEmotion"
+        FROM "Memory" m
+        JOIN "EmotionalState" es ON m."emotionalStateId" = es.id
+        JOIN "EmotionalStateComponent" esc ON es.id = esc."emotionalStateId"
+        JOIN "EmotionType" et ON esc."emotionTypeId" = et.id
+        WHERE m."personaId" = ${personaId}::uuid
           ${whereClause}
       ),
       emotion_networks AS (
         SELECT 
-          em1.emotion_name,
+          em1."emotionName",
           em1.memory_id as root_memory,
           array_agg(DISTINCT em2.memory_id) as network_memories,
           AVG((em1.intensity + em2.intensity) / 2) as avg_intensity
         FROM emotion_memories em1
-        JOIN memory_associations ma ON em1.memory_id = ma.memory_a
-        JOIN emotion_memories em2 ON ma.memory_b = em2.memory_id
-        WHERE em1.emotion_name = em2.emotion_name
-          OR em1.primary_emotion = em2.primary_emotion
-        GROUP BY em1.emotion_name, em1.memory_id
+        JOIN "MemoryAssociation" ma ON em1.memory_id = ma."memoryA"
+        JOIN emotion_memories em2 ON ma."memoryB" = em2.memory_id
+        WHERE em1."emotionName" = em2."emotionName"
+          OR em1."primaryEmotion" = em2."primaryEmotion"
+        GROUP BY em1."emotionName", em1.memory_id
         HAVING COUNT(DISTINCT em2.memory_id) >= 2
       )
       SELECT 
         ROW_NUMBER() OVER (ORDER BY array_length(network_memories, 1) DESC, avg_intensity DESC) as network_id,
-        emotion_name,
+        "emotionName",
         array_to_string(array_append(network_memories, root_memory), ',') as memory_ids,
         avg_intensity
       FROM emotion_networks
@@ -666,7 +679,7 @@ export class MemoryGraphService {
 
     return networks.map((n) => ({
       networkId: Number(n.network_id),
-      dominantEmotion: n.emotion_name,
+      dominantEmotion: n.emotionName,
       memories: n.memory_ids.split(','),
       emotionalIntensity: n.avg_intensity,
     }));
@@ -698,23 +711,23 @@ export class MemoryGraphService {
       WITH RECURSIVE cross_modal_paths AS (
         SELECT 
           m.id as current_memory,
-          m.content_type,
+          m."contentType",
           array[m.id::text] as path,
-          array[m.content_type] as content_types,
-          1.0 as strength,
+          array[m."contentType"]::varchar[] as content_types,
+          1.0::double precision as strength,
           1 as depth
-        FROM memories m
-        WHERE m.persona_id = ${personaId}::uuid
-          AND m.content_type = ${startContentType}
+        FROM "Memory" m
+        WHERE m."personaId" = ${personaId}::uuid
+          AND m."contentType" = ${startContentType}
         
         UNION ALL
         
         SELECT 
           m2.id as current_memory,
-          m2.content_type,
+          m2."contentType",
           array_append(cmp.path, m2.id::text),
-          array_append(cmp.content_types, m2.content_type),
-          cmp.strength * ma.association_strength,
+          array_append(cmp.content_types, m2."contentType"),
+          cmp.strength * ma."associationStrength",
           cmp.depth + 1
         FROM cross_modal_paths cmp
         JOIN "MemoryAssociation" ma ON cmp.current_memory = ma."memoryA"
@@ -729,7 +742,7 @@ export class MemoryGraphService {
         array_to_string(content_types, ',') as content_types,
         strength as path_strength
       FROM cross_modal_paths
-      WHERE content_type = ${endContentType}
+      WHERE "contentType" = ${endContentType}
         AND array_length(path, 1) > 1
       ORDER BY strength DESC, depth ASC
       LIMIT 10

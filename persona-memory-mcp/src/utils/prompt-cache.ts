@@ -117,16 +117,16 @@ export class PromptCache {
 
     try {
       const content = await fs.readFile(filepath, 'utf-8');
-      
+
       // Parse the markdown file to extract the JSON response
       const responseMatch = content.match(/```json\n([\s\S]*?)\n```/);
-      if (!responseMatch) {
+      if (!responseMatch || !responseMatch[1]) {
         return null;
       }
 
       const response = JSON.parse(responseMatch[1]);
       console.log(`[PromptCache] Cache hit for ${functionName}`);
-      
+
       return {
         timestamp: new Date().toISOString(),
         functionName,

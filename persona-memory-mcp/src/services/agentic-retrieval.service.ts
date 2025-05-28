@@ -147,14 +147,26 @@ export class AgenticMemoryRetrieval {
 
     // Use raw SQL for vector similarity search - returns Memory table columns with distance
     const results = await this.prisma.$queryRaw<(Memory & { distance: number })[]>`
-      SELECT m.*, 
+      SELECT m.id, 
+             m."personaId",
+             m."memoryType",
+             m."contentType",
+             m."searchText",
+             m."emotionalStateId",
+             m."sourceEntityId",
+             m."significanceScore",
+             m."occurredAt",
+             m."createdAt",
+             m."lastAccessed",
+             m.tags,
+             m.channel,
              m.embedding <-> ${JSON.stringify(embedding)}::vector as distance
-      FROM memories m
-      WHERE m.persona_id = ${query.personaId}::uuid
-        ${query.contentTypes ? Prisma.sql`AND m.content_type = ANY(${query.contentTypes})` : Prisma.empty}
-        ${query.memoryTypes ? Prisma.sql`AND m.memory_type = ANY(${query.memoryTypes})` : Prisma.empty}
-        ${query.timeRange?.start ? Prisma.sql`AND m.occurred_at >= ${query.timeRange.start}` : Prisma.empty}
-        ${query.timeRange?.end ? Prisma.sql`AND m.occurred_at <= ${query.timeRange.end}` : Prisma.empty}
+      FROM "Memory" m
+      WHERE m."personaId" = ${query.personaId}::uuid
+        ${query.contentTypes ? Prisma.sql`AND m."contentType" = ANY(${query.contentTypes})` : Prisma.empty}
+        ${query.memoryTypes ? Prisma.sql`AND m."memoryType" = ANY(${query.memoryTypes})` : Prisma.empty}
+        ${query.timeRange?.start ? Prisma.sql`AND m."occurredAt" >= ${query.timeRange.start}` : Prisma.empty}
+        ${query.timeRange?.end ? Prisma.sql`AND m."occurredAt" <= ${query.timeRange.end}` : Prisma.empty}
       ORDER BY distance ASC
       LIMIT 10
     `;

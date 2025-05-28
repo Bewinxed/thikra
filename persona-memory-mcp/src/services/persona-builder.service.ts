@@ -1,8 +1,8 @@
 import type { Persona, PrismaClient } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { b } from '../../baml_client';
-import type { EmbeddingService } from './embedding.service';
 import { PromptCache } from '../utils/prompt-cache';
+import type { EmbeddingService } from './embedding.service';
 
 // Multi-pass extraction result following TODO.md Phase 4
 // Types match BAML nullable outputs and convert to Prisma optional inputs
@@ -52,6 +52,14 @@ interface ExtractionResult {
     intensity: number;
     reason?: string;
   }>;
+  boundaries: Array<{
+    boundaryTypeId?: number;
+    boundaryDescription: string;
+    firmness: number;
+    appliesToEntityId?: string;
+    contextSpecific?: string;
+    violationResponse?: string;
+  }>;
 }
 
 export class PersonaBuilder {
@@ -80,10 +88,16 @@ export class PersonaBuilder {
     });
 
     // Multi-pass extraction for completeness (TODO.md Phase 4.2)
-    const allContent = conversationHistory
-      .filter((m) => m.role === 'assistant')
+    // Extract from assistant messages (the LLM's responses show its personality)
+    const assistantMessages = conversationHistory.filter((m) => m.role === 'assistant');
+    console.log('Assistant messages found:', assistantMessages.length);
+    console.log('Assistant messages:', assistantMessages);
+    
+    const allContent = assistantMessages
       .map((m) => m.content)
       .join('\n\n');
+      
+    console.log('All content for extraction:', JSON.stringify(allContent));
 
     const extraction = await this.multiPassExtraction(allContent);
     await this.saveExtractionResults(personaId, extraction);
@@ -125,12 +139,7 @@ export class PersonaBuilder {
     const result = await extractFn();
 
     // Store in cache
-    await this.promptCache.store(
-      functionName,
-      content,
-      result,
-      undefined,
-    );
+    await this.promptCache.store(functionName, content, result, undefined);
 
     return result;
   }
@@ -140,40 +149,30 @@ export class PersonaBuilder {
     try {
       // Check cache first for all extractions
       const cacheKey = `persona_builder_${content}`;
-      
+
       // Pass 1: Identity Components
-      const identityResult = await this.cachedExtract(
-        'ExtractIdentityComponents',
-        content,
-        () => b.ExtractIdentityComponents(content)
+      const identityResult = await this.cachedExtract('ExtractIdentityComponents', content, () =>
+        b.ExtractIdentityComponents(content),
       );
 
       // Pass 2: Physical Attributes
-      const physicalResult = await this.cachedExtract(
-        'ExtractPhysicalAttributes',
-        content,
-        () => b.ExtractPhysicalAttributes(content)
+      const physicalResult = await this.cachedExtract('ExtractPhysicalAttributes', content, () =>
+        b.ExtractPhysicalAttributes(content),
       );
 
       // Pass 3: Emotional Patterns
-      const emotionalResult = await this.cachedExtract(
-        'ExtractEmotionalPatterns',
-        content,
-        () => b.ExtractEmotionalPatterns(content)
+      const emotionalResult = await this.cachedExtract('ExtractEmotionalPatterns', content, () =>
+        b.ExtractEmotionalPatterns(content),
       );
 
       // Pass 4: Speech Patterns
-      const speechResult = await this.cachedExtract(
-        'ExtractSpeechPatterns',
-        content,
-        () => b.ExtractSpeechPatterns(content)
+      const speechResult = await this.cachedExtract('ExtractSpeechPatterns', content, () =>
+        b.ExtractSpeechPatterns(content),
       );
 
       // Pass 5: Desires and Boundaries
-      const desiresResult = await this.cachedExtract(
-        'ExtractDesiresAndBoundaries',
-        content,
-        () => b.ExtractDesiresAndBoundaries(content)
+      const desiresResult = await this.cachedExtract('ExtractDesiresAndBoundaries', content, () =>
+        b.ExtractDesiresAndBoundaries(content),
       );
 
       return {
@@ -222,6 +221,14 @@ export class PersonaBuilder {
           intensity: p.intensity,
           reason: p.reason ?? undefined,
         })),
+        boundaries: (desiresResult.boundaries || []).map((b) => ({
+          boundaryTypeId: b.boundaryTypeId ?? undefined,
+          boundaryDescription: b.boundaryDescription,
+          firmness: b.firmness,
+          appliesToEntityId: b.appliesToEntityId ?? undefined,
+          contextSpecific: b.contextSpecific ?? undefined,
+          violationResponse: b.violationResponse ?? undefined,
+        })),
       };
     } catch (error) {
       console.error('Error in multi-pass extraction:', error);
@@ -233,6 +240,7 @@ export class PersonaBuilder {
         speechPatterns: [],
         desires: [],
         preferences: [],
+        boundaries: [],
       };
     }
   }
@@ -248,8 +256,18 @@ export class PersonaBuilder {
 
     // Save physical attributes
     for (const attr of results.physicalAttributes) {
+      const attrData = { personaId, ...attr };
+      // Validate bodyPartId against existing body parts
+      if (attrData.bodyPartId) {
+        const bodyPartExists = await this.prisma.bodyPart.findUnique({
+          where: { id: attrData.bodyPartId },
+        });
+        if (!bodyPartExists) {
+          delete attrData.bodyPartId;
+        }
+      }
       await this.prisma.physicalAttribute.create({
-        data: { personaId, ...attr },
+        data: attrData,
       });
     }
 
@@ -269,8 +287,18 @@ export class PersonaBuilder {
 
     // Save desires
     for (const desire of results.desires) {
+      const desireData = { personaId, ...desire };
+      // Validate desireCategoryId against existing categories
+      if (desireData.desireCategoryId) {
+        const categoryExists = await this.prisma.desireCategory.findUnique({
+          where: { id: desireData.desireCategoryId },
+        });
+        if (!categoryExists) {
+          delete desireData.desireCategoryId;
+        }
+      }
       await this.prisma.desire.create({
-        data: { personaId, ...desire },
+        data: desireData,
       });
     }
 
@@ -278,6 +306,32 @@ export class PersonaBuilder {
     for (const pref of results.preferences) {
       await this.prisma.preference.create({
         data: { personaId, ...pref },
+      });
+    }
+
+    // Save boundaries
+    for (const boundary of results.boundaries) {
+      const boundaryData = { personaId, ...boundary };
+      // Validate boundaryTypeId against existing boundary types
+      if (boundaryData.boundaryTypeId) {
+        const boundaryTypeExists = await this.prisma.boundaryType.findUnique({
+          where: { id: boundaryData.boundaryTypeId },
+        });
+        if (!boundaryTypeExists) {
+          delete boundaryData.boundaryTypeId;
+        }
+      }
+      // Validate appliesToEntityId against existing entities  
+      if (boundaryData.appliesToEntityId) {
+        const entityExists = await this.prisma.entity.findUnique({
+          where: { id: boundaryData.appliesToEntityId },
+        });
+        if (!entityExists) {
+          delete boundaryData.appliesToEntityId;
+        }
+      }
+      await this.prisma.boundary.create({
+        data: boundaryData,
       });
     }
 

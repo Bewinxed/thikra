@@ -19,7 +19,7 @@ import type { BamlRuntime, BamlCtxManager, ClientRegistry, Image, Audio } from "
 import { toBamlError, HTTPRequest } from "@boundaryml/baml"
 import type { Checked, Check } from "./types"
 import type * as types from "./types"
-import type {CurrentStateAnalysis, Desire, DesiresExtractionResult, DetectedEmotion, EmergingPattern, EmotionAnalysis, EmotionMetadata, EmotionalExtractionResult, EmotionalTransition, EventTriggeredChange, IdentityComponent, IdentityExtractionResult, PADValues, PersonalityContext, PersonalityDynamicsAnalysis, PersonalityObservation, PersonalityObservationResult, PersonalityTrait, PhysicalAttribute, PhysicalExtractionResult, Preference, Resume, SpeechExtractionResult, SpeechPattern, StateDeviation, TemporalDynamics, VariabilityPattern} from "./types"
+import type {Boundary, CurrentStateAnalysis, Desire, DesiresExtractionResult, DetectedEmotion, EmergingPattern, EmotionAnalysis, EmotionMetadata, EmotionalExtractionResult, EmotionalTransition, EventTriggeredChange, IdentityComponent, IdentityExtractionResult, PADValues, PersonalityContext, PersonalityDynamicsAnalysis, PersonalityObservation, PersonalityObservationResult, PersonalityTrait, PhysicalAttribute, PhysicalExtractionResult, Preference, Resume, SpeechExtractionResult, SpeechPattern, StateDeviation, TemporalDynamics, VariabilityPattern} from "./types"
 import type TypeBuilder from "./type_builder"
 
 type BamlCallOptions = {

@@ -19,7 +19,7 @@ import type { BamlRuntime, FunctionResult, BamlCtxManager, Image, Audio, ClientR
 import { toBamlError, type HTTPRequest } from "@boundaryml/baml"
 import type { Checked, Check, RecursivePartialNull as MovedRecursivePartialNull } from "./types"
 import type * as types from "./types"
-import type {CurrentStateAnalysis, Desire, DesiresExtractionResult, DetectedEmotion, EmergingPattern, EmotionAnalysis, EmotionMetadata, EmotionalExtractionResult, EmotionalTransition, EventTriggeredChange, IdentityComponent, IdentityExtractionResult, PADValues, PersonalityContext, PersonalityDynamicsAnalysis, PersonalityObservation, PersonalityObservationResult, PersonalityTrait, PhysicalAttribute, PhysicalExtractionResult, Preference, Resume, SpeechExtractionResult, SpeechPattern, StateDeviation, TemporalDynamics, VariabilityPattern} from "./types"
+import type {Boundary, CurrentStateAnalysis, Desire, DesiresExtractionResult, DetectedEmotion, EmergingPattern, EmotionAnalysis, EmotionMetadata, EmotionalExtractionResult, EmotionalTransition, EventTriggeredChange, IdentityComponent, IdentityExtractionResult, PADValues, PersonalityContext, PersonalityDynamicsAnalysis, PersonalityObservation, PersonalityObservationResult, PersonalityTrait, PhysicalAttribute, PhysicalExtractionResult, Preference, Resume, SpeechExtractionResult, SpeechPattern, StateDeviation, TemporalDynamics, VariabilityPattern} from "./types"
 import type TypeBuilder from "./type_builder"
 import { HttpRequest, HttpStreamRequest } from "./sync_request"
 import { LlmResponseParser, LlmStreamParser } from "./parser"

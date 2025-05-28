@@ -46,6 +46,16 @@ export function all_succeeded<CheckName extends string>(checks: Record<CheckName
 export function get_checks<CheckName extends string>(checks: Record<CheckName, Check>): Check[] {
     return Object.values(checks)
 }
+export interface Boundary {
+  boundaryTypeId?: number | null
+  boundaryDescription: string
+  firmness: number
+  appliesToEntityId?: string | null
+  contextSpecific?: string | null
+  violationResponse?: string | null
+  
+}
+
 export interface CurrentStateAnalysis {
   observedValue: number
   distanceFromTypical?: number | null
@@ -66,6 +76,7 @@ export interface Desire {
 export interface DesiresExtractionResult {
   desires: Desire[]
   preferences: Preference[]
+  boundaries: Boundary[]
   
 }
 

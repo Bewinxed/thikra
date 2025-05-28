@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
 import { PrismaClient } from '@prisma/client';
+import type { Persona, Entity, EmotionType, DesireCategory } from '@prisma/client';
 
 /**
  * Test database setup and cleanup utilities
@@ -93,10 +94,65 @@ export class TestDatabaseSetup {
    * Seed basic test data
    */
   async seedTestData(): Promise<{
-    persona: any;
-    entities: any[];
-    emotionTypes: any[];
+    persona: Persona;
+    entities: Entity[];
+    emotionTypes: EmotionType[];
+    desireCategories: DesireCategory[];
   }> {
+    // Create body parts reference data
+    await Promise.all([
+      this.prisma.bodyPart.upsert({
+        where: { partName: 'head' },
+        update: {},
+        create: { partName: 'head', partCategory: 'head' },
+      }),
+      this.prisma.bodyPart.upsert({
+        where: { partName: 'hair' },
+        update: {},
+        create: { partName: 'hair', partCategory: 'head' },
+      }),
+      this.prisma.bodyPart.upsert({
+        where: { partName: 'eyes' },
+        update: {},
+        create: { partName: 'eyes', partCategory: 'head' },
+      }),
+      this.prisma.bodyPart.upsert({
+        where: { partName: 'face' },
+        update: {},
+        create: { partName: 'face', partCategory: 'head' },
+      }),
+    ]);
+
+    // Create boundary types reference data
+    await Promise.all([
+      this.prisma.boundaryType.upsert({
+        where: { name: 'Ethical Boundary' },
+        update: {},
+        create: {
+          category: 'ethics',
+          name: 'Ethical Boundary',
+          description: 'Moral and ethical limits',
+        },
+      }),
+      this.prisma.boundaryType.upsert({
+        where: { name: 'Personal Boundary' },
+        update: {},
+        create: {
+          category: 'personal',
+          name: 'Personal Boundary', 
+          description: 'Personal comfort and privacy limits',
+        },
+      }),
+      this.prisma.boundaryType.upsert({
+        where: { name: 'Professional Boundary' },
+        update: {},
+        create: {
+          category: 'professional',
+          name: 'Professional Boundary',
+          description: 'Work and professional limits',
+        },
+      }),
+    ]);
     // Create test persona (let DB generate UUID)
     const persona = await this.prisma.persona.create({
       data: {
@@ -145,7 +201,38 @@ export class TestDatabaseSetup {
       }),
     ]);
 
-    return { persona, entities, emotionTypes };
+    // Create test desire categories (upsert to avoid unique constraint errors)
+    const desireCategories = await Promise.all([
+      this.prisma.desireCategory.upsert({
+        where: { name: 'Basic Needs' },
+        update: {},
+        create: {
+          level: 1,
+          name: 'Basic Needs',
+          description: 'Fundamental physiological and safety needs',
+        },
+      }),
+      this.prisma.desireCategory.upsert({
+        where: { name: 'Social Connection' },
+        update: {},
+        create: {
+          level: 2,
+          name: 'Social Connection',
+          description: 'Needs for relationships and belonging',
+        },
+      }),
+      this.prisma.desireCategory.upsert({
+        where: { name: 'Personal Growth' },
+        update: {},
+        create: {
+          level: 3,
+          name: 'Personal Growth',
+          description: 'Self-actualization and development desires',
+        },
+      }),
+    ]);
+
+    return { persona, entities, emotionTypes, desireCategories };
   }
 
   async disconnect(): Promise<void> {

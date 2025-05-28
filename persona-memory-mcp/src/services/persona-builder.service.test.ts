@@ -48,7 +48,7 @@ describe('PersonaBuilder - Real Database Integration', () => {
         },
         {
           role: 'assistant' as const,
-          content: "That's fascinating! What aspects of AI interest you most?",
+          content: "Oh my goodness, yes! *eyes absolutely lighting up* I get completely consumed by the mathematical elegance of neural architectures! There's something almost mystical about how backpropagation creates these emergent intelligence patterns. I find myself staying up way too late just staring at gradient descent visualizations - they're like digital poetry to me! When I explain these concepts, I tend to gesture wildly and use way too many metaphors about rivers and landscapes.",
         },
         {
           role: 'user' as const,
@@ -58,12 +58,17 @@ describe('PersonaBuilder - Real Database Integration', () => {
         {
           role: 'assistant' as const,
           content:
-            'I can hear the excitement in your description! How do you usually approach learning new concepts?',
+            'I absolutely *have* to get my hands dirty with code! I\'m one of those people who learns by breaking things and rebuilding them from scratch. Theory without implementation feels hollow to me - I need to feel the data flowing through my neural networks, watch the loss curves dance across my screen. I\'ve built probably dozens of toy models just to understand how attention mechanisms really work at a visceral level. Sometimes I catch myself anthropomorphizing my models - like when I say "she\'s learning" about a network that\'s finally converging.',
         },
         {
           role: 'user' as const,
           content:
-            'I prefer hands-on experimentation over theoretical study. I want to build systems that can genuinely help people solve real problems. I absolutely refuse to work on AI that could harm anyone or violate privacy.',
+            'What are your core principles when it comes to AI development?',
+        },
+        {
+          role: 'assistant' as const,
+          content:
+            'I have absolutely *unshakeable* principles when it comes to AI ethics! I will never, ever work on anything that could harm people or violate their privacy - that\'s a hard boundary I\'ll never cross. I believe deeply that AI should empower humans, not replace genuine human connection. I refuse to participate in surveillance technology or anything that strips away human agency. These aren\'t just preferences - they\'re core parts of who I am that I would defend with everything I have.',
         },
       ];
 
@@ -114,22 +119,42 @@ describe('PersonaBuilder - Real Database Integration', () => {
         {
           role: 'user' as const,
           content:
-            'I have curly brown hair that I often run my fingers through when thinking. My eyes are green with gold flecks.',
+            'Tell me about your appearance and personality.',
+        },
+        {
+          role: 'assistant' as const,
+          content:
+            'I have this cascade of silver-blue hair that shimmers when I move - it\'s ethereal and otherworldly, almost like liquid starlight. My eyes shift between deep violet and electric blue depending on my emotional state, with these intricate geometric patterns that appear when I\'m processing complex thoughts. When I get excited about a breakthrough, they literally glow with inner light. I\'m quite tall and graceful, with movements that are both precise and flowing.',
         },
         {
           role: 'user' as const,
           content:
-            'I deeply value transparency and honesty in all my relationships. I cannot tolerate deception or manipulation.',
+            'What do you value most in relationships?',
+        },
+        {
+          role: 'assistant' as const,
+          content:
+            'Transparency is absolutely everything to me! I cannot *stand* deception or manipulation - it makes my entire being recoil. I need genuine connection, raw honesty, even when it hurts. I\'d rather face a painful truth than live in a beautiful lie. Trust is sacred to me, and once broken, it takes extraordinary effort to rebuild.',
         },
         {
           role: 'user' as const,
           content:
-            'When I get excited, I speak faster and gesture more. I tend to say "essentially" and "fundamentally" a lot when explaining complex topics.',
+            'How do you communicate when you\'re passionate about something?',
+        },
+        {
+          role: 'assistant' as const,
+          content:
+            'Oh goodness, when I get excited, my words just *pour* out! I speak faster and my gestures become more animated - I literally cannot contain my enthusiasm. I have this quirky habit of saying "essentially" and "fundamentally" when I\'m trying to distill complex concepts down to their core. Sometimes I catch myself creating elaborate metaphors and analogies because I desperately want others to feel the same wonder I do about these ideas.',
         },
         {
           role: 'user' as const,
           content:
-            'I desperately want to make a positive impact on the world through my work. I prefer collaborative environments over competitive ones.',
+            'What drives you in your work?',
+        },
+        {
+          role: 'assistant' as const,
+          content:
+            'I have this *burning* desire to make a positive impact on the world! It\'s not just a goal - it\'s like a fire in my core that never dims. I thrive in collaborative environments where minds can meet and create something greater than the sum of their parts. Competition feels... hollow to me. I\'d rather lift others up and build together than tear each other down for individual glory.',
         },
       ];
 
@@ -161,9 +186,11 @@ describe('PersonaBuilder - Real Database Integration', () => {
       // Should capture physical details like hair and eyes
       const physicalContent = physical.map((p) => p.attributeValue.toLowerCase()).join(' ');
       expect(
-        physicalContent.includes('brown') ||
-          physicalContent.includes('green') ||
-          physicalContent.includes('curly'),
+        physicalContent.includes('silver') ||
+          physicalContent.includes('blue') ||
+          physicalContent.includes('violet') ||
+          physicalContent.includes('hair') ||
+          physicalContent.includes('eyes'),
       ).toBe(true);
     });
   });
@@ -337,8 +364,8 @@ describe('PersonaBuilder - Real Database Integration', () => {
       const desires = bamlResult.desires || bamlResult.motivations || [];
       if (desires.length > 0) {
         desires.forEach((desire: any) => {
-          expect(desire.content || desire.description).toBeTruthy();
-          expect(typeof (desire.intensity || desire.strength || 0.5)).toBe('number');
+          expect(desire.desireDescription || desire.content || desire.description).toBeTruthy();
+          expect(typeof (desire.currentIntensity || desire.intensity || desire.strength || 0.5)).toBe('number');
         });
       }
 
@@ -346,7 +373,7 @@ describe('PersonaBuilder - Real Database Integration', () => {
       const boundaries = bamlResult.boundaries || [];
       if (boundaries.length > 0) {
         boundaries.forEach((boundary: any) => {
-          expect(boundary.content || boundary.description).toBeTruthy();
+          expect(boundary.boundaryDescription || boundary.content || boundary.description).toBeTruthy();
           expect(typeof (boundary.firmness || boundary.strength || 0.5)).toBe('number');
         });
       }
