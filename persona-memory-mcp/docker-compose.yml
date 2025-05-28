@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5433:5432"  # Non-standard port to avoid conflicts
+    environment:
+      POSTGRES_USER: persona_user
+      POSTGRES_PASSWORD: persona_password
+      POSTGRES_DB: persona_memory
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: |
+      postgres
+      -c shared_preload_libraries='pg_stat_statements'
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U persona_user -d persona_memory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  embedding-service:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.2
+    ports:
+      - "8765:80"
+    environment:
+      MODEL_ID: "nomic-ai/nomic-embed-text-v1"
+      MAX_BATCH_TOKENS: "16384"
+      MAX_CLIENT_BATCH_SIZE: "32"
+    volumes:
+      - model_cache:/data
+    command: --model-id nomic-ai/nomic-embed-text-v1 --port 80
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  postgres_data:
+  model_cache:

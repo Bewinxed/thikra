@@ -1,0 +1,45 @@
+{
+  "name": "persona-memory-mcp",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir=dist",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "bun run prisma/seed.ts",
+    "db:reset": "prisma migrate reset",
+    "db:studio": "prisma studio",
+    "lint": "biome check .",
+    "lint:fix": "biome check --apply .",
+    "format": "biome format --write ."
+  },
+  "prisma": {
+    "seed": "bun run prisma/seed.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "latest",
+    "@types/pg": "^8.15.2",
+    "tsx": "^4.19.4"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@boundaryml/baml": "^0.89.0",
+    "@instructor-ai/instructor": "^1.7.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@prisma/client": "^6.8.2",
+    "@typescript/native-preview": "^7.0.0-dev.20250527.1",
+    "dotenv": "^16.5.0",
+    "instructor": "^1.0.0",
+    "openai": "^4.103.0",
+    "pg": "^8.16.0",
+    "pgvector": "^0.2.1",
+    "prisma": "^6.8.2",
+    "zod": "^3.25.32"
+  }
+}

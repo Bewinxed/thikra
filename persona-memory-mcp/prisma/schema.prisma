@@ -1,0 +1,912 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "views"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [uuid_ossp(map: "uuid-ossp"), pgvector(map: "vector"), pg_trgm, btree_gin]
+}
+
+// ==================== ENUMS ====================
+// Using enums for constrained values while keeping flexibility for dynamic content
+
+enum EntityType {
+  human
+  llm
+  system
+  unknown
+}
+
+enum MemoryType {
+  episodic // Specific events with time/place
+  semantic // Facts and knowledge
+  procedural // Skills and how-to
+  emotional // Strong emotional experiences
+  somatic // Body memories
+  personal_semantic // Between episodic and semantic
+}
+
+enum ConsolidationState {
+  labile // New, easily modified
+  consolidating // Being strengthened
+  consolidated // Long-term stable
+  reconsolidating // Being updated
+  forgotten // Below threshold
+}
+
+enum RelationshipStatus {
+  active
+  paused
+  ended
+  evolving
+}
+
+enum PowerDynamic {
+  equal
+  dominant
+  submissive
+  complex_shifting
+  negotiated
+  undefined
+}
+
+// ==================== CORE IDENTITY TABLES ====================
+
+model Persona {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name            String   @db.VarChar(255)
+  createdAt       DateTime @default(now())
+  lastActive      DateTime @default(now()) @updatedAt
+  protectedTraits String[] @default([]) // Core traits that shouldn't change
+
+  // Relations - Complete list from all documents
+  identityComponents   IdentityComponent[]
+  memories             Memory[]
+  emotionalBaseline    EmotionalBaseline?
+  physicalAttributes   PhysicalAttribute[]
+  conversations        Conversation[]
+  relationships        Relationship[]         @relation("PersonaRelationships")
+  speechPatterns       SpeechPattern[]
+  linguisticMarkers    LinguisticMarker[]
+  personalityTraits    PersonalityTrait[]
+  personalityEvolution PersonalityEvolution[]
+  lifeEvents           LifeEvent[]
+  desires              Desire[]
+  boundaries           Boundary[]
+  preferences          Preference[]
+  dreamsAspirations    DreamAspiration[]
+  metacognition        MetacognitiveProcess[]
+  selfDiscoveries      SelfDiscovery[]
+  innerConflicts       InnerConflict[]
+  personaStates        PersonaState[]
+  copingMechanisms     CopingMechanism[]
+  sensoryExperiences   SensoryExperience[]
+  identityRelations    IdentityRelationship[]
+  clothingItems        ClothingItem[]
+  outfits              Outfit[]
+  accessories          Accessory[]
+  bodyLanguageStates   BodyLanguageState[]
+  somaticResponses     SomaticResponse[]
+
+}
+
+model Entity {
+  id                    String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name                  String?    @db.VarChar(255)
+  entityType            EntityType
+  firstContactChannel   String?    @db.VarChar(100)
+  firstContactTime      DateTime   @default(now())
+  channelsPresent       String[]   @default([])
+  identificationMarkers Json?      // Flexible for any identifying data
+  llmDetails            Json?      // Model, version, capabilities for LLM entities
+
+  // Relations
+  conversations        Conversation[]
+  relationships        Relationship[]      @relation("EntityRelationships")
+  memoriesAsSource     Memory[]            @relation("MemorySource")
+  memoryParticipations MemoryParticipant[]
+  somaticTriggers      SomaticResponse[]
+  boundaryApplications Boundary[]          @relation("BoundaryAppliesTo")
+  sharedDesires        Desire[]            @relation("DesireSharedWith")
+  sharedDreams         DreamAspiration[]   @relation("DreamSharedWith")
+  toldLifeEvents       LifeEvent[]         @relation("LifeEventToldTo")
+
+}
+
+model IdentityComponent {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId     String   @db.Uuid
+  componentType String   @db.VarChar(50) // Not enum - flexible discovery
+  content       String   @db.Text
+  importance    Float    @default(0.5) // 0-1 scale
+  isNegotiable  Boolean  @default(true)
+  formedThrough String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+  @@unique([personaId, componentType, content])
+}
+
+// ==================== EMOTION SYSTEM ====================
+// Based on: Plutchik's Wheel of Emotions & PAD Model
+// Ref: https://en.wikipedia.org/wiki/Robert_Plutchik
+
+model EmotionType {
+  id             Int    @id @default(autoincrement())
+  primaryEmotion String @db.VarChar(50) // joy, trust, fear, etc.
+  intensityLevel Int    // 1=low, 2=medium, 3=high
+  emotionName    String @unique @db.VarChar(50) // serenity, joy, ecstasy
+
+  // PAD (Pleasure-Arousal-Dominance) values
+  // Ref: https://en.wikipedia.org/wiki/PAD_emotional_state_model
+  pleasureComponent  Float? // -1 to 1
+  arousalComponent   Float? // -1 to 1
+  dominanceComponent Float? // -1 to 1
+
+  // Relations
+  emotionalStateComponents EmotionalStateComponent[]
+
+}
+
+model EmotionalState {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  createdAt DateTime @default(now())
+
+  // Relations
+  components EmotionalStateComponent[]
+  memories   Memory[]
+
+}
+
+model EmotionalStateComponent {
+  emotionalStateId String @db.Uuid
+  emotionTypeId    Int
+  intensity        Float  @db.Real // 0-1
+  voiceModulation  Json?  // For voice generation systems
+
+  // Relations
+  emotionalState EmotionalState @relation(fields: [emotionalStateId], references: [id], onDelete: Cascade)
+  emotionType    EmotionType    @relation(fields: [emotionTypeId], references: [id])
+
+  @@id([emotionalStateId, emotionTypeId])
+}
+
+model EmotionalBaseline {
+  personaId            String @id @db.Uuid
+  defaultPleasure      Float  @default(0) // -1 to 1
+  defaultArousal       Float  @default(0) // -1 to 1
+  defaultDominance     Float  @default(0) // -1 to 1
+  emotionalStability   Float  @default(0.5) // 0-1
+  moodDurationAvgHours Float  @default(4)
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+// ==================== MEMORY ARCHITECTURE ====================
+// Based on: Multiple Memory Systems Theory
+// Ref: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3145971/
+
+model Memory {
+  id            String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId     String     @db.Uuid
+  memoryType    MemoryType
+  memorySubtype String?    @db.VarChar(50) // Flexible subtypes
+  contentType   String?    @db.VarChar(50) // text, image, audio, video
+  createdAt     DateTime   @default(now())
+  occurredAt    DateTime?
+
+  // Vector embedding for semantic search (768 dimensions for nomic-embed-text-v1)
+  embedding    Unsupported("vector(768)")?
+  searchText   String?                     @db.Text
+  searchVector Unsupported("tsvector")?    // Full-text search
+
+  emotionalStateId  String?   @db.Uuid
+  significanceScore Float     @default(0.5) // 0-1
+  confidenceLevel   Float     @default(1.0) // 0-1
+  accessCount       Int       @default(0)
+  lastAccessed      DateTime?
+
+  // Memory consolidation tracking
+  // Ref: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4526749/
+  consolidationState ConsolidationState @default(labile)
+  memoryStrength     Float              @default(1.0) // 0-1
+  decayRate          Float              @default(0.1) // For forgetting curve
+
+  realityType      String   @default("experienced") @db.VarChar(50)
+  sourceEntityId   String?  @db.Uuid
+  referencedStates String[] @default([]) // State keys referenced
+  tags             String[] @default([])
+  channel          String?  @db.VarChar(100)
+
+  // Relations
+  persona             Persona                  @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  emotionalState      EmotionalState?          @relation(fields: [emotionalStateId], references: [id])
+  sourceEntity        Entity?                  @relation("MemorySource", fields: [sourceEntityId], references: [id])
+  episodicContent     MemoryContentEpisodic?
+  semanticContent     MemoryContentSemantic?
+  proceduralContent   MemoryContentProcedural?
+  participants        MemoryParticipant[]
+  consolidation       MemoryConsolidation?
+  associationsFrom    MemoryAssociation[]      @relation("MemoryA")
+  associationsTo      MemoryAssociation[]      @relation("MemoryB")
+  embodiedMemories    EmbodiedMemory[]
+  stateChangeTriggers PersonaStateChange[]
+  preferenceFormation Preference[]
+
+  @@index([personaId, memoryType])
+  @@index([personaId, occurredAt(sort: Desc)])
+  @@index([personaId, significanceScore(sort: Desc)])
+  @@index([personaId, createdAt(sort: Desc)])
+  @@index([emotionalStateId, createdAt(sort: Desc)])
+  @@index([personaId, contentType, createdAt(sort: Desc)])
+  @@index([embedding], map: "Memory_embedding_HNSW")
+}
+
+// Content tables for different memory types
+model MemoryContentEpisodic {
+  memoryId        String  @id @db.Uuid
+  eventType       String? @db.VarChar(100)
+  location        String? @db.VarChar(200)
+  durationMinutes Int?
+  whatHappened    String  @db.Text
+  whySignificant  String? @db.Text
+  lessonLearned   String? @db.Text
+
+  // Sensory details
+  visualDetails          String? @db.Text
+  auditoryDetails        String? @db.Text
+  tactileDetails         String? @db.Text
+  olfactoryDetails       String? @db.Text
+  gustatoryDetails       String? @db.Text
+  enhancedSensoryDetails Json?   // For non-human senses
+  voiceNotes             String? @db.Text // How voices sounded
+
+  // Relations
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+}
+
+model MemoryContentSemantic {
+  memoryId           String   @id @db.Uuid
+  factType           String?  @db.VarChar(50)
+  factCategory       String?  @db.VarChar(100)
+  statement          String   @db.Text
+  confidence         Float    @default(1.0) // 0-1
+  source             String?  @db.VarChar(100)
+  supportingEvidence String[] @default([])
+
+  // Relations
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+}
+
+model MemoryContentProcedural {
+  memoryId         String    @id @db.Uuid
+  skillName        String    @db.VarChar(100)
+  skillCategory    String?   @db.VarChar(50)
+  proficiencyLevel Int?      // 1-10
+  steps            String[]  @default([])
+  lastPracticed    DateTime?
+  practiceCount    Int       @default(0)
+
+  // Relations
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+}
+
+model MemoryParticipant {
+  memoryId String @db.Uuid
+  entityId String @db.Uuid
+  role     String @db.VarChar(50) // primary, observer, mentioned, etc.
+
+  // Relations
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+  entity Entity @relation(fields: [entityId], references: [id])
+
+  @@id([memoryId, entityId])
+}
+
+// Memory consolidation tracking
+// Ref: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3145971/
+model MemoryConsolidation {
+  memoryId            String    @id @db.Uuid
+  initialStrength     Float     @default(1.0)
+  currentStrength     Float     @default(1.0)
+  lastReactivation    DateTime  @default(now())
+  reactivationCount   Int       @default(0)
+  inReconsolidation   Boolean   @default(false)
+  windowOpenedAt      DateTime?
+  reinforcingMemories String[]  @default([])
+  conflictingMemories String[]  @default([])
+
+  // Relations
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+}
+
+// Memory associations create graph-like structure in PostgreSQL
+model MemoryAssociation {
+  id                  String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  memoryA             String   @db.Uuid
+  memoryB             String   @db.Uuid
+  associationType     String   @db.VarChar(50) // semantic, temporal, emotional, causal, cross_modal
+  associationStrength Float    @default(0.5) // 0-1
+  createdAt           DateTime @default(now())
+
+  // Relations
+  memoryARelation Memory @relation("MemoryA", fields: [memoryA], references: [id], onDelete: Cascade)
+  memoryBRelation Memory @relation("MemoryB", fields: [memoryB], references: [id], onDelete: Cascade)
+
+  @@unique([memoryA, memoryB])
+  @@index([memoryA, associationStrength(sort: Desc)])
+  @@index([memoryB, associationStrength(sort: Desc)])
+}
+
+// Embodied memories - somatic experiences
+// Ref: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4407481/
+model EmbodiedMemory {
+  id                     String  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  memoryId               String  @db.Uuid
+  somaticSensation       String  @db.Text
+  bodyLocation           String  @db.VarChar(100)
+  sensationIntensity     Float   // 0-1
+  triggerType            String  @db.VarChar(50)
+  automaticResponse      String  @db.Text
+  canConsciouslyOverride Boolean @default(true)
+
+  // Relations
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+}
+
+// ==================== PHYSICAL IDENTITY SYSTEM ====================
+
+model BodyPart {
+  id           Int     @id @default(autoincrement())
+  partName     String  @unique @db.VarChar(50)
+  partCategory String? @db.VarChar(50)
+  parentPartId Int?
+
+  // Relations
+  parentPart             BodyPart?               @relation("BodyPartHierarchy", fields: [parentPartId], references: [id])
+  childParts             BodyPart[]              @relation("BodyPartHierarchy")
+  physicalAttributes     PhysicalAttribute[]
+  bodyLanguageComponents BodyLanguageComponent[]
+
+}
+
+model PhysicalAttribute {
+  id             String  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId      String  @db.Uuid
+  bodyPartId     Int?
+  attributeType  String  @db.VarChar(50) // color, size, texture, etc.
+  attributeValue String  @db.VarChar(200)
+  isPermanent    Boolean @default(true)
+  context        String? @db.VarChar(100) // When/how it changes
+
+  // Relations
+  persona  Persona   @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  bodyPart BodyPart? @relation(fields: [bodyPartId], references: [id])
+
+  @@unique([personaId, bodyPartId, attributeType, context])
+}
+
+model BodyLanguageState {
+  id                     String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId              String   @db.Uuid
+  name                   String   @db.VarChar(100)
+  description            String?  @db.Text
+  fullBodyDescription    String?  @db.Text
+  gaitStyle              String?  @db.Text
+  characteristicSequence String[] @default([])
+
+  // Relations
+  persona    Persona                 @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  components BodyLanguageComponent[]
+
+}
+
+model BodyLanguageComponent {
+  bodyLanguageStateId String  @db.Uuid
+  bodyPartId          Int
+  position            String  @db.VarChar(100)
+  tensionLevel        Float?  // 0-1
+  movementPattern     String? @db.VarChar(100)
+
+  // Relations
+  bodyLanguageState BodyLanguageState @relation(fields: [bodyLanguageStateId], references: [id], onDelete: Cascade)
+  bodyPart          BodyPart          @relation(fields: [bodyPartId], references: [id])
+
+  @@id([bodyLanguageStateId, bodyPartId])
+}
+
+// ==================== CONVERSATION & COMMUNICATION ====================
+
+model Conversation {
+  id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId     String    @db.Uuid
+  entityId      String    @db.Uuid
+  channel       String    @db.VarChar(100)
+  startedAt     DateTime  @default(now())
+  lastMessageAt DateTime?
+  endedAt       DateTime?
+  topicSummary  String?   @db.Text
+  emotionalArc  Json?     // Track emotional journey
+  messageCount  Int       @default(0)
+
+  // Relations
+  persona  Persona   @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  entity   Entity    @relation(fields: [entityId], references: [id])
+  messages Message[]
+
+  @@unique([personaId, entityId, channel, startedAt])
+}
+
+model Message {
+  id              String                   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  conversationId  String                   @db.Uuid
+  senderType      String                   @db.VarChar(20) // persona, entity
+  senderId        String                   @db.Uuid
+  timestamp       DateTime                 @default(now())
+  content         String                   @db.Text
+  contentType     String                   @default("text") @db.VarChar(20)
+  detectedEmotion String?                  @db.VarChar(50)
+  isSignificant   Boolean                  @default(false)
+  searchVector    Unsupported("tsvector")?
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, timestamp])
+}
+
+model SpeechPattern {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId         String   @db.Uuid
+  patternType       String   @db.VarChar(50) // greeting, farewell, filler, etc.
+  textPattern       String   @db.Text
+  frequency         Float    @default(0.5) // 0-1
+  emotionalContexts String[] @default([])
+  socialContexts    String[] @default([])
+  variations        String[] @default([])
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+model LinguisticMarker {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId         String   @db.Uuid
+  markerType        String   @db.VarChar(50) // accent, dialect, unique phrases
+  markerDescription String   @db.Text
+  exampleUsage      String[] @default([])
+  frequency         Float    @default(0.5)
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+// ==================== RELATIONSHIPS & SOCIAL ====================
+
+model Relationship {
+  id               String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId        String             @db.Uuid
+  entityId         String             @db.Uuid
+  relationshipType String             @db.VarChar(50) // friend, lover, master, etc.
+  powerDynamic     PowerDynamic
+  trustLevel       Float              @default(0.5) // 0-1
+  intimacyLevel    Float              @default(0.0) // 0-1
+  comfortLevel     Float              @default(0.5) // 0-1
+  typicalGreeting  String?            @db.Text
+  farewellStyle    String?            @db.Text
+  petNames         String[]           @default([])
+  insideJokes      String[]           @default([])
+  sharedSecrets    String[]           @default([]) // Memory IDs
+  boundaries       Json               @default("{}") @db.JsonB // Flexible structure
+  topicsToAvoid    String[]           @default([])
+  voiceAdjustments Json?              // For voice generation
+  status           RelationshipStatus @default(active)
+  establishedAt    DateTime           @default(now())
+  lastInteraction  DateTime?
+
+  // Relations
+  persona          Persona           @relation("PersonaRelationships", fields: [personaId], references: [id], onDelete: Cascade)
+  entity           Entity            @relation("EntityRelationships", fields: [entityId], references: [id])
+  somaticResponses SomaticResponse[]
+
+  @@unique([personaId, entityId])
+}
+
+model SomaticResponse {
+  id               String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId        String   @db.Uuid
+  entityId         String?  @db.Uuid
+  relationshipId   String?  @db.Uuid
+  triggerContext   String   @db.VarChar(100)
+  physicalResponse String   @db.Text
+  intensity        Float // 0-1
+  lastTriggered    DateTime @default(now())
+  occurrenceCount  Int      @default(1)
+
+  // Relations
+  persona      Persona       @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  entity       Entity?       @relation(fields: [entityId], references: [id])
+  relationship Relationship? @relation(fields: [relationshipId], references: [id])
+
+}
+
+// ==================== CLOTHING & APPEARANCE ====================
+
+model ClothingType {
+  id           Int    @id @default(autoincrement())
+  typeName     String @unique @db.VarChar(50)
+  category     String @db.VarChar(50)
+  typicalLayer Int?
+
+  // Relations
+  clothingItems ClothingItem[]
+
+}
+
+model ClothingItem {
+  id               String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId        String    @db.Uuid
+  clothingTypeId   Int?
+  name             String    @db.VarChar(100)
+  primaryColor     String?   @db.VarChar(50)
+  secondaryColors  String[]  @default([])
+  material         String?   @db.VarChar(50)
+  pattern          String?   @db.VarChar(50)
+  condition        String    @default("good") @db.VarChar(50)
+  acquiredDate     DateTime? @db.Date
+  acquiredContext  String?   @db.Text
+  sentimentalValue Float     @default(0) // 0-1
+  tags             String[]  @default([])
+
+  // Relations
+  persona      Persona             @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  clothingType ClothingType?       @relation(fields: [clothingTypeId], references: [id])
+  outfits      OutfitComposition[]
+
+}
+
+model Outfit {
+  id                  String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId           String    @db.Uuid
+  name                String    @db.VarChar(100)
+  appropriateContexts String[]  @default([])
+  lastWorn            DateTime?
+  associatedMood      String?   @db.VarChar(50)
+
+  // Relations
+  persona      Persona             @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  compositions OutfitComposition[]
+
+}
+
+model OutfitComposition {
+  outfitId       String @db.Uuid
+  clothingItemId String @db.Uuid
+
+  // Relations
+  outfit       Outfit       @relation(fields: [outfitId], references: [id], onDelete: Cascade)
+  clothingItem ClothingItem @relation(fields: [clothingItemId], references: [id])
+
+  @@id([outfitId, clothingItemId])
+}
+
+model Accessory {
+  id              String  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId       String  @db.Uuid
+  accessoryType   String  @db.VarChar(50)
+  name            String  @db.VarChar(100)
+  material        String? @db.VarChar(50)
+  wornLocation    String  @db.VarChar(100)
+  description     String? @db.Text
+  significance    String? @db.Text
+  acquiredContext String? @db.Text
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+// ==================== PERSONALITY & EVOLUTION ====================
+
+model PersonalityTrait {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId     String   @db.Uuid
+  traitCategory String   @db.VarChar(50) // Big Five, custom, etc.
+  traitName     String   @db.VarChar(100)
+  baselineValue Float    // 0-1
+  currentValue  Float    // 0-1
+  isCoreTrait   Boolean  @default(false)
+  flexibility   Float    @default(0.5) // How much it can change
+  lastUpdated   DateTime @default(now()) @updatedAt
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+// Track personality evolution over time
+// Ref: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6732056/
+model PersonalityEvolution {
+  id                  String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId           String   @db.Uuid
+  snapshotTime        DateTime @default(now())
+  personalityProfile  Json     @db.JsonB
+  emotionalBaselines  Json     @db.JsonB
+  changesFromPrevious Json?    @db.JsonB
+  changeDrivers       String[] @default([])
+  consistencyScore    Float?   // 0-1
+  driftDetected       Boolean  @default(false)
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+model LifeEvent {
+  id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId       String    @db.Uuid
+  eventType       String    @db.VarChar(50)
+  description     String    @db.Text
+  ageOccurred     Int?
+  dateOccurred    DateTime? @db.Date
+  lifeImpactScore Int       // 1-10
+  shapesTraits    String[]  @default([])
+  disclosureLevel String    @db.VarChar(50)
+  toldTo          String[]  @default([]) // Entity IDs
+
+  // Relations
+  persona        Persona  @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  toldToEntities Entity[] @relation("LifeEventToldTo")
+
+}
+
+// ==================== DESIRES, BOUNDARIES & PREFERENCES ====================
+
+model DesireCategory {
+  id          Int     @id @default(autoincrement())
+  level       Int // Hierarchy level
+  name        String  @unique @db.VarChar(50)
+  description String? @db.Text
+
+  // Relations
+  desires Desire[]
+
+}
+
+model Desire {
+  id                    String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId             String   @db.Uuid
+  desireCategoryId      Int?
+  desireDescription     String   @db.Text
+  currentIntensity      Float    @default(0.5) // 0-1
+  fulfillmentLevel      Float    @default(0) // 0-1
+  fulfillmentConditions String[] @default([])
+  partiallyFulfilledBy  String[] @default([])
+  isSecret              Boolean  @default(false)
+  sharedWith            String[] @default([]) // Entity IDs
+
+  // Relations
+  persona            Persona         @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  desireCategory     DesireCategory? @relation(fields: [desireCategoryId], references: [id])
+  sharedWithEntities Entity[]        @relation("DesireSharedWith")
+
+}
+
+model BoundaryType {
+  id          Int     @id @default(autoincrement())
+  category    String  @db.VarChar(50)
+  name        String  @unique @db.VarChar(100)
+  description String? @db.Text
+
+  // Relations
+  boundaries Boundary[]
+
+}
+
+model Boundary {
+  id                  String  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId           String  @db.Uuid
+  boundaryTypeId      Int?
+  boundaryDescription String  @db.Text
+  firmness            Float   @default(0.8) // 0-1
+  appliesToEntityId   String? @db.Uuid
+  contextSpecific     String? @db.VarChar(100)
+  violationResponse   String? @db.Text
+  timesTested         Int     @default(0)
+  timesHeld           Int     @default(0)
+
+  // Relations
+  persona         Persona       @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  boundaryType    BoundaryType? @relation(fields: [boundaryTypeId], references: [id])
+  appliesToEntity Entity?       @relation("BoundaryAppliesTo", fields: [appliesToEntityId], references: [id])
+
+}
+
+model Preference {
+  id                    String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId             String   @db.Uuid
+  preferenceCategory    String   @db.VarChar(50)
+  specificItem          String   @db.VarChar(200)
+  preferenceType        String   @db.VarChar(20) // like, dislike
+  intensity             Float // 0-1
+  reason                String?  @db.Text
+  formedThroughMemoryId String?  @db.Uuid
+  contextBoosters       String[] @default([])
+  contextDampeners      String[] @default([])
+
+  // Relations
+  persona        Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  formedByMemory Memory? @relation(fields: [formedThroughMemoryId], references: [id])
+
+  @@unique([personaId, preferenceCategory, specificItem])
+}
+
+model DreamAspiration {
+  id                     String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId              String   @db.Uuid
+  dreamType              String   @db.VarChar(50)
+  description            String   @db.Text
+  perceivedAchievability Float    // 0-1
+  stepsTaken             String[] @default([])
+  obstacles              String[] @default([])
+  sharedWith             String[] @default([])
+  importance             Float // 0-1
+  givesHope              Boolean  @default(true)
+
+  // Relations
+  persona            Persona  @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  sharedWithEntities Entity[] @relation("DreamSharedWith")
+
+}
+
+// ==================== METACOGNITIVE LAYER ====================
+// Ref: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6093616/ (Metacognition and self-awareness)
+
+model MetacognitiveProcess {
+  id                       String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId                String   @db.Uuid
+  processType              String   @db.VarChar(50)
+  topic                    String   @db.Text
+  thoughtContent           String   @db.Text
+  metaThought              String   @db.Text // Thinking about thinking
+  reflectionDepth          Int
+  selfAwarenessScore       Float    // 0-1
+  biasRecognition          String[] @default([])
+  identifiedContradictions Json     @default("[]") @db.JsonB
+  resolutionAttempted      Boolean  @default(false)
+  createdAt                DateTime @default(now())
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+model SelfDiscovery {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId         String   @db.Uuid
+  discoveryContent  String   @db.Text
+  discoveredThrough String   @db.Text
+  changedBeliefs    String[] @default([])
+  changedBehaviors  String[] @default([])
+  emotionalImpact   String   @db.Text
+  occurredAt        DateTime @default(now())
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+model InnerConflict {
+  id                       String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId                String   @db.Uuid
+  conflictDescription      String   @db.Text
+  sideA                    String   @db.Text
+  sideB                    String   @db.Text
+  currentBalance           Float    // -1 to 1 (A to B)
+  behavioralManifestations String[] @default([])
+  attemptedResolutions     String[] @default([])
+  stillActive              Boolean  @default(true)
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+// ==================== DYNAMIC STATE SYSTEM (KV STORE) ====================
+// States are discovered and tracked dynamically as LLMs reference them
+
+model PersonaState {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId     String   @db.Uuid
+  stateKey      String   @db.VarChar(100) // e.g., "heat_level", "arousal"
+  stateValue    Json     @db.JsonB // Flexible value storage
+  valueType     String   @db.VarChar(50) // counter, boolean, timer, object
+  description   String?  @db.Text
+  createdAt     DateTime @default(now())
+  lastUpdated   DateTime @default(now()) @updatedAt
+  updateCount   Int      @default(0)
+  isConsciousOf Boolean  @default(true) // Is persona aware of this state?
+
+  // Relations
+  persona      Persona              @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  stateChanges PersonaStateChange[]
+
+  @@unique([personaId, stateKey])
+  @@index([personaId, stateKey])
+  @@index([lastUpdated(sort: Desc)])
+}
+
+model PersonaStateChange {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  stateId         String   @db.Uuid
+  oldValue        Json?    @db.JsonB
+  newValue        Json?    @db.JsonB
+  changedAt       DateTime @default(now())
+  triggerType     String   @db.VarChar(50) // manual, memory, conversation
+  triggerDetails  Json?    @db.JsonB
+  relatedMemoryId String?  @db.Uuid
+
+  // Relations
+  state         PersonaState @relation(fields: [stateId], references: [id], onDelete: Cascade)
+  relatedMemory Memory?      @relation(fields: [relatedMemoryId], references: [id])
+
+}
+
+// ==================== ADDITIONAL SUPPORT TABLES ====================
+
+model CopingMechanism {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId       String   @db.Uuid
+  stressorType    String   @db.VarChar(100)
+  copingStrategy  String   @db.Text
+  effectiveness   Float // 0-1
+  physicalActions String[] @default([])
+  isHealthy       Boolean
+  tryingToChange  Boolean  @default(false)
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+model SensoryExperience {
+  id                  String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId           String   @db.Uuid
+  senseType           String   @db.VarChar(50) // vision, hearing, touch, etc.
+  sensitivityLevel    Float    // 0-1
+  pleasantStimuli     String[] @default([])
+  unpleasantStimuli   String[] @default([])
+  behavioralResponses Json?    @db.JsonB
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
+
+model IdentityRelationship {
+  id                 String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  personaId          String   @db.Uuid
+  aspect             String   @db.VarChar(100) // e.g., "being non-human", "my nature"
+  acceptanceLevel    Float    // 0-1
+  prideShameSpectrum Float    // -1 to 1
+  pastExperiences    String[] @default([])
+  hidesFromSome      Boolean  @default(false)
+  embracesWithOthers Boolean  @default(false)
+
+  // Relations
+  persona Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+}
