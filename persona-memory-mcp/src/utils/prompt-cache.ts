@@ -34,9 +34,12 @@ export class PromptCache {
 
   /**
    * Generate a deterministic filename based on function name and content hash
+   * Include BAML schema version to invalidate cache when prompts change
    */
-  private generateFilename(functionName: string, prompt: string): string {
-    const hash = crypto.createHash('md5').update(prompt).digest('hex').substring(0, 8);
+  private generateFilename(functionName: string, prompt: string, schemaVersion?: string): string {
+    // Include schema version in hash to invalidate cache when BAML prompts change
+    const contentToHash = schemaVersion ? `${schemaVersion}:${prompt}` : prompt;
+    const hash = crypto.createHash('md5').update(contentToHash).digest('hex').substring(0, 8);
     return `${functionName}_${hash}.md`;
   }
 
@@ -48,10 +51,11 @@ export class PromptCache {
     prompt: string,
     response: any,
     metadata?: PromptCacheEntry['metadata'],
+    schemaVersion?: string,
   ): Promise<string> {
     await this.init();
 
-    const filename = this.generateFilename(functionName, prompt);
+    const filename = this.generateFilename(functionName, prompt, schemaVersion);
     const filepath = path.join(this.cacheDir, filename);
 
     // Check if file already exists - if so, don't overwrite
@@ -109,10 +113,10 @@ export class PromptCache {
   /**
    * Load a cached prompt/response pair
    */
-  async load(functionName: string, prompt: string): Promise<PromptCacheEntry | null> {
+  async load(functionName: string, prompt: string, schemaVersion?: string): Promise<PromptCacheEntry | null> {
     await this.init();
 
-    const filename = this.generateFilename(functionName, prompt);
+    const filename = this.generateFilename(functionName, prompt, schemaVersion);
     const filepath = path.join(this.cacheDir, filename);
 
     try {

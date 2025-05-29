@@ -64,12 +64,43 @@ interface ExtractionResult {
 
 export class PersonaBuilder {
   private promptCache: PromptCache;
+  private bamlSchemaHash: string | null = null;
 
   constructor(
     private prisma: PrismaClient,
     private embeddingService: EmbeddingService,
   ) {
     this.promptCache = new PromptCache();
+  }
+
+  // Auto-generate schema version from BAML file content
+  private async getBamlSchemaHash(): Promise<string> {
+    if (this.bamlSchemaHash) {
+      return this.bamlSchemaHash;
+    }
+
+    try {
+      const crypto = require('crypto');
+      const fs = require('fs/promises');
+      const path = require('path');
+
+      // Read BAML files and create hash
+      const bamlDir = path.join(process.cwd(), 'baml_src');
+      const files = await fs.readdir(bamlDir);
+      const bamlFiles = files.filter((f: string) => f.endsWith('.baml')).sort();
+      
+      let combinedContent = '';
+      for (const file of bamlFiles) {
+        const content = await fs.readFile(path.join(bamlDir, file), 'utf-8');
+        combinedContent += content;
+      }
+      
+      this.bamlSchemaHash = crypto.createHash('md5').update(combinedContent).digest('hex').substring(0, 8);
+      return this.bamlSchemaHash;
+    } catch (error) {
+      // Fallback if BAML files can't be read
+      return 'default';
+    }
   }
 
   // Build persona from conversation history - main entry point
@@ -90,14 +121,9 @@ export class PersonaBuilder {
     // Multi-pass extraction for completeness (TODO.md Phase 4.2)
     // Extract from assistant messages (the LLM's responses show its personality)
     const assistantMessages = conversationHistory.filter((m) => m.role === 'assistant');
-    console.log('Assistant messages found:', assistantMessages.length);
-    console.log('Assistant messages:', assistantMessages);
-    
     const allContent = assistantMessages
       .map((m) => m.content)
       .join('\n\n');
-      
-    console.log('All content for extraction:', JSON.stringify(allContent));
 
     const extraction = await this.multiPassExtraction(allContent);
     await this.saveExtractionResults(personaId, extraction);
@@ -117,16 +143,7 @@ export class PersonaBuilder {
       },
     });
 
-    console.log('Description content for extraction:', JSON.stringify(description));
     const extraction = await this.multiPassExtraction(description);
-    console.log('Extraction results:', {
-      identityComponents: extraction.identityComponents.length,
-      physicalAttributes: extraction.physicalAttributes.length,
-      speechPatterns: extraction.speechPatterns.length,
-      desires: extraction.desires.length,
-      boundaries: extraction.boundaries.length,
-      preferences: extraction.preferences.length,
-    });
     await this.saveExtractionResults(personaId, extraction);
 
     return persona;
@@ -138,8 +155,10 @@ export class PersonaBuilder {
     content: string,
     extractFn: () => Promise<T>,
   ): Promise<T> {
+    const schemaHash = await this.getBamlSchemaHash();
+    
     // Try to load from cache first
-    const cached = await this.promptCache.load(functionName, content);
+    const cached = await this.promptCache.load(functionName, content, schemaHash);
     if (cached) {
       return JSON.parse(cached.response) as T;
     }
@@ -148,7 +167,7 @@ export class PersonaBuilder {
     const result = await extractFn();
 
     // Store in cache
-    await this.promptCache.store(functionName, content, result, undefined);
+    await this.promptCache.store(functionName, content, result, undefined, schemaHash);
 
     return result;
   }
