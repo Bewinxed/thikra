@@ -1,5 +1,3 @@
 {
-    "recommendations": [
-        "boundary.baml-extension"
-    ]
+	"recommendations": ["boundary.baml-extension"]
 }

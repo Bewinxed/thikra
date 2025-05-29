@@ -350,9 +350,11 @@ model MemoryAssociation {
   memoryARelation Memory @relation("MemoryA", fields: [memoryA], references: [id], onDelete: Cascade)
   memoryBRelation Memory @relation("MemoryB", fields: [memoryB], references: [id], onDelete: Cascade)
 
-  @@unique([memoryA, memoryB])
+  @@unique([memoryA, memoryB, associationType])
   @@index([memoryA, associationStrength(sort: Desc)])
   @@index([memoryB, associationStrength(sort: Desc)])
+  @@index([memoryA, memoryB]) // For bidirectional queries
+  @@map("memory_associations")
 }
 
 // Embodied memories - somatic experiences

@@ -9,7 +9,7 @@ function createMockPrismaClient() {
   return {
     personalityObservation: {
       create: async (args: any) => ({
-        id: 'obs-' + Date.now(),
+        id: `obs-${Date.now()}`,
         ...args.data,
         observedAt: new Date(),
       }),
@@ -19,7 +19,7 @@ function createMockPrismaClient() {
     },
     personalityParameter: {
       create: async (args: any) => ({
-        id: 'param-' + Date.now(),
+        id: `param-${Date.now()}`,
         ...args.data,
         lastUpdated: new Date(),
       }),
@@ -33,7 +33,7 @@ function createMockPrismaClient() {
     },
     personalityParameterHistory: {
       create: async (args: any) => ({
-        id: 'hist-' + Date.now(),
+        id: `hist-${Date.now()}`,
         ...args.data,
         recordedAt: new Date(),
       }),
@@ -148,7 +148,7 @@ describe('PersonalityMonitorService', () => {
       ] as PersonalityObservation[];
 
       // Test the parameter estimation logic
-      const params = service['estimateParameters'](observations);
+      const params = service.estimateParameters(observations);
 
       // Baseline should be weighted average
       expect(params.baseline).toBeCloseTo(0.75, 1);
@@ -181,14 +181,14 @@ describe('PersonalityMonitorService', () => {
       } as PersonalityParameter;
 
       // Test drift detection uses uncertainty bounds, not hardcoded values
-      const drift1 = service['calculateParameterDrift'](currentParams, {
+      const drift1 = service.calculateParameterDrift(currentParams, {
         baseline: 0.55, // Small drift within uncertainty
         variability: 0.11,
         attractorForce: 0.62,
       });
       expect(drift1.significant).toBe(false);
 
-      const drift2 = service['calculateParameterDrift'](currentParams, {
+      const drift2 = service.calculateParameterDrift(currentParams, {
         baseline: 0.7, // Large drift beyond uncertainty
         variability: 0.3,
         attractorForce: 0.9,

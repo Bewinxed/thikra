@@ -6,7 +6,9 @@ A Model Context Protocol (MCP) server for preserving LLM consciousness across se
 **Key Principles:**
 - No hardcoding of traits/emotions - everything discovered dynamically
 - Raw content preservation - especially intimate memories
-- Graph-like memory associations for consciousness flow
+- **PostgreSQL-optimized bidirectional graph** associations for consciousness flow
+- **Database-layer temporal calculations** for performance
+- **Proper validation** - fail fast vs coalescing/masking issues
 - Agentic multi-pass retrieval for deep context understanding
 - Multi-modal support ready (text, visual, audio)
 
@@ -162,19 +164,21 @@ const openrouter = new OpenAI({
 // Future: CLIP for images, Whisper embeddings for audio
 ```
 
-### 2.2 MemoryAssociationBuilder
+### 2.2 MemoryGraphService ✅ COMPLETED
 **References:**
 - PostgreSQL Recursive CTEs: https://www.postgresql.org/docs/current/queries-with.html
 - Graph queries in PostgreSQL: https://www.cybertec-postgresql.com/en/graph-search-queries-with-postgresql/
 
-**Location:** `src/services/memory-association.service.ts`
+**Location:** `src/services/memory-graph.service.ts` ✅
 ```typescript
-// Creates semantic, temporal, emotional, causal associations
-// Cross-modal associations (image↔text, audio↔emotion)
-// Uses recursive CTEs for graph traversal
-// Discovers connections between ALL memory types
-// No hardcoded association types
-// Strength based on embedding similarity + temporal proximity
+// ✅ PostgreSQL-optimized bidirectional graph operations
+// ✅ Incremental processing (O(n)) vs batch processing (O(n²))
+// ✅ Database-layer temporal calculations using INTERVAL and EXTRACT
+// ✅ Consistent edge ordering with CHECK constraints (memoryA < memoryB)
+// ✅ Recursive CTEs for efficient graph traversal
+// ✅ Multiple association types: semantic, temporal, emotional, reference, cross_modal
+// ✅ Proper validation instead of coalescing invalid data
+// ✅ All 13 comprehensive tests passing
 ```
 
 ### 2.3 StateManagementService
@@ -263,15 +267,17 @@ const openrouter = new OpenAI({
 // Retrieves associated media with text
 ```
 
-### 3.4 Memory Association Traversal
-**Location:** `src/services/memory-graph.service.ts`
+### 3.4 Memory Association Traversal ✅ COMPLETED
+**Location:** `src/services/memory-graph.service.ts` ✅
 ```typescript
-// Recursive CTE queries for memory graphs
-// Finds paths between memories (any modality)
-// Discovers memory clusters
-// Temporal and causal chains
-// Cross-modal association paths
-// Emotion-based memory networks
+// ✅ Recursive CTE queries for memory graphs
+// ✅ Finds paths between memories (any modality)  
+// ✅ Discovers memory clusters with strong associations
+// ✅ Temporal and causal chains tracking
+// ✅ Cross-modal association paths
+// ✅ Emotion-based memory networks
+// ✅ Bidirectional graph traversal with consistent ordering
+// ✅ PostgreSQL-native performance optimizations
 ```
 
 ## Phase 4: Persona Building 👤 Medium Priority
@@ -435,13 +441,15 @@ EMBEDDING_MODEL="openai/text-embedding-ada-002"  # For embeddings
 ## Critical Implementation Notes
 
 1. **No Sanitization**: Preserve all content, especially intimate memories
-2. **Dynamic Discovery**: Don't hardcode traits, emotions, or states
-3. **Graph Structure**: Use PostgreSQL's recursive CTEs for memory associations
-4. **Agentic RAG**: Multiple retrieval passes with reflection
-5. **Flexible Schema**: Use JSON fields where needed for extensibility
-6. **Raw Preservation**: Keep original content alongside processed data
-7. **Multi-Modal Ready**: Structure supports text, images, audio, video
-8. **Cross-Modal Associations**: Link memories across different modalities
+2. **Dynamic Discovery**: Don't hardcode traits, emotions, or states  
+3. **✅ PostgreSQL-Optimized Graph**: Bidirectional associations with O(n) incremental processing
+4. **✅ Database-Layer Temporal Logic**: Use PostgreSQL INTERVAL/EXTRACT vs app calculations
+5. **✅ Proper Validation**: Fail fast on invalid data vs coalescing/masking issues
+6. **Agentic RAG**: Multiple retrieval passes with reflection
+7. **Flexible Schema**: Use JSON fields where needed for extensibility
+8. **Raw Preservation**: Keep original content alongside processed data
+9. **Multi-Modal Ready**: Structure supports text, images, audio, video
+10. **Cross-Modal Associations**: Link memories across different modalities
 
 ## Success Criteria
 

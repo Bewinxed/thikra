@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { EmbeddingService } from './embedding.service';
 import { MemoryGraphService } from './memory-graph.service';
 import {
   type TestDatabaseSetup,
@@ -35,32 +36,29 @@ describe('MemoryGraphService - Real Database Integration', () => {
 
   async function createTestMemories(personaId: string) {
     const prisma = getTestPrisma();
+    const embeddingService = new EmbeddingService();
 
     const memories = [
       {
         searchText: 'Learning about neural networks and deep learning fundamentals',
-        // embedding will be set via raw SQL
         memoryType: 'semantic',
         significanceScore: 0.8,
         tags: ['machine learning', 'neural networks'],
       },
       {
         searchText: 'Implementing a transformer model for natural language processing',
-        // embedding will be set via raw SQL
         memoryType: 'procedural',
         significanceScore: 0.9,
         tags: ['transformers', 'nlp', 'implementation'],
       },
       {
         searchText: 'Feeling excited about successful model training results',
-        // embedding will be set via raw SQL
         memoryType: 'emotional',
         significanceScore: 0.85,
         tags: ['excitement', 'success'],
       },
       {
         searchText: 'Had coffee with colleague to discuss project ideas',
-        // embedding will be set via raw SQL
         memoryType: 'episodic',
         significanceScore: 0.6,
         tags: ['social', 'collaboration'],
@@ -69,17 +67,27 @@ describe('MemoryGraphService - Real Database Integration', () => {
 
     const createdMemories = [];
     for (const memoryData of memories) {
+      // Generate real embedding using the embedding service
+      const embedding = await embeddingService.embed(memoryData.searchText);
+
       const memory = await prisma.memory.create({
         data: {
           personaId,
           searchText: memoryData.searchText,
-          // embedding will be set via raw SQL later
           memoryType: memoryData.memoryType as any,
           significanceScore: memoryData.significanceScore,
           tags: memoryData.tags,
           contentType: 'text',
         },
       });
+
+      // Update embedding using raw SQL since Prisma doesn't handle vector type well
+      await prisma.$executeRaw`
+        UPDATE "Memory" 
+        SET embedding = ${EmbeddingService.formatVectorForPg(embedding)}::vector
+        WHERE id = ${memory.id}::uuid
+      `;
+
       createdMemories.push(memory);
     }
 
@@ -126,13 +134,96 @@ describe('MemoryGraphService - Real Database Integration', () => {
     });
 
     it('should create different association types based on memory content and context', async () => {
-      // Build associations for all memories
-      for (const memory of testMemories) {
+      // This test verifies that different types of associations can be created
+      const prisma = getTestPrisma();
+      const embeddingService = new EmbeddingService();
+
+      // Create memories with different characteristics to enable various association types
+
+      // 1. Add timestamps to enable temporal associations
+      const now = new Date();
+      await prisma.memory.update({
+        where: { id: testMemories[0].id },
+        data: { occurredAt: new Date(now.getTime() - 3600000) }, // 1 hour ago
+      });
+      await prisma.memory.update({
+        where: { id: testMemories[1].id },
+        data: { occurredAt: new Date(now.getTime() - 1800000) }, // 30 minutes ago
+      });
+      await prisma.memory.update({
+        where: { id: testMemories[2].id },
+        data: { occurredAt: new Date(now.getTime() - 900000) }, // 15 minutes ago
+      });
+      await prisma.memory.update({
+        where: { id: testMemories[3].id },
+        data: { occurredAt: new Date(now.getTime() - 300000) }, // 5 minutes ago
+      });
+
+      // 2. Add emotional states to multiple memories for emotional associations
+      const emotionalState1 = await prisma.emotionalState.create({
+        data: {
+          components: {
+            create: {
+              emotionTypeId: testData.emotionTypes[0].id, // joy
+              intensity: 0.8,
+            },
+          },
+        },
+      });
+
+      const emotionalState2 = await prisma.emotionalState.create({
+        data: {
+          components: {
+            create: {
+              emotionTypeId: testData.emotionTypes[0].id, // same emotion type (joy)
+              intensity: 0.7,
+            },
+          },
+        },
+      });
+
+      await prisma.memory.update({
+        where: { id: testMemories[2].id }, // "Feeling excited" memory
+        data: { emotionalStateId: emotionalState1.id },
+      });
+
+      await prisma.memory.update({
+        where: { id: testMemories[1].id }, // Procedural memory - also gets emotional state
+        data: { emotionalStateId: emotionalState2.id },
+      });
+
+      // 3. Create a memory that references another memory ID for reference associations
+      const searchTextWithReference = `Building on the work from ${testMemories[0].id}, we improved the model`;
+      const referencingMemory = await prisma.memory.create({
+        data: {
+          personaId: testData.persona.id,
+          searchText: searchTextWithReference,
+          memoryType: 'semantic',
+          significanceScore: 0.8,
+          contentType: 'text',
+        },
+      });
+
+      // Generate and set embedding for the new memory
+      if (!referencingMemory.searchText) {
+        throw new Error('Expected searchText to be defined');
+      }
+      const embedding = await embeddingService.embed(referencingMemory.searchText);
+      await prisma.$executeRaw`
+        UPDATE "Memory" 
+        SET embedding = ${EmbeddingService.formatVectorForPg(embedding)}::vector
+        WHERE id = ${referencingMemory.id}::uuid
+      `;
+
+      // Build associations for all memories including the new one
+      const allTestMemories = [...testMemories, referencingMemory];
+      for (const memory of allTestMemories) {
         await service.buildAssociationsForMemory(memory.id);
       }
 
-      const prisma = getTestPrisma();
-      const allAssociations = await prisma.memoryAssociation.findMany({});
+      const allAssociations = await prisma.memoryAssociation.findMany({
+        orderBy: [{ associationType: 'asc' }, { associationStrength: 'desc' }],
+      });
 
       expect(allAssociations.length).toBeGreaterThan(0);
 
@@ -140,9 +231,14 @@ describe('MemoryGraphService - Real Database Integration', () => {
       const associationTypes = [...new Set(allAssociations.map((a) => a.associationType))];
       expect(associationTypes.length).toBeGreaterThan(1);
 
-      // Verify semantic associations between similar content
+      // Verify each type exists
       const semanticAssocs = allAssociations.filter((a) => a.associationType === 'semantic');
+      const temporalAssocs = allAssociations.filter((a) => a.associationType === 'temporal');
+      const referenceAssocs = allAssociations.filter((a) => a.associationType === 'reference');
+
       expect(semanticAssocs.length).toBeGreaterThan(0);
+      expect(temporalAssocs.length).toBeGreaterThan(0);
+      expect(referenceAssocs.length).toBeGreaterThan(0);
     });
   });
 
@@ -270,43 +366,53 @@ describe('MemoryGraphService - Real Database Integration', () => {
     it('should find temporal chains of related memories', async () => {
       // Create memories with specific timestamps
       const prisma = getTestPrisma();
+      const embeddingService = new EmbeddingService();
       const now = new Date();
 
-      const temporalMemories = await Promise.all([
-        prisma.memory.create({
+      const temporalMemoryData = [
+        {
+          searchText: 'Started learning about ML',
+          significanceScore: 0.7,
+          occurredAt: new Date(now.getTime() - 3600000 * 3), // 3 hours ago
+          memoryType: 'episodic' as const,
+        },
+        {
+          searchText: 'Implemented first neural network',
+          significanceScore: 0.8,
+          occurredAt: new Date(now.getTime() - 3600000 * 2), // 2 hours ago
+          memoryType: 'procedural' as const,
+        },
+        {
+          searchText: 'Achieved breakthrough results',
+          significanceScore: 0.9,
+          occurredAt: new Date(now.getTime() - 3600000), // 1 hour ago
+          memoryType: 'emotional' as const,
+        },
+      ];
+
+      const temporalMemories = [];
+      for (const data of temporalMemoryData) {
+        const embedding = await embeddingService.embed(data.searchText);
+
+        const memory = await prisma.memory.create({
           data: {
             personaId: testData.persona.id,
-            searchText: 'Started learning about ML',
-            // embedding will be set via raw SQL
-            significanceScore: 0.7,
-            createdAt: new Date(now.getTime() - 3600000 * 3), // 3 hours ago
-            memoryType: 'episodic',
+            searchText: data.searchText,
+            significanceScore: data.significanceScore,
+            occurredAt: data.occurredAt,
+            memoryType: data.memoryType,
             contentType: 'text',
           },
-        }),
-        prisma.memory.create({
-          data: {
-            personaId: testData.persona.id,
-            searchText: 'Implemented first neural network',
-            // embedding will be set via raw SQL
-            significanceScore: 0.8,
-            createdAt: new Date(now.getTime() - 3600000 * 2), // 2 hours ago
-            memoryType: 'procedural',
-            contentType: 'text',
-          },
-        }),
-        prisma.memory.create({
-          data: {
-            personaId: testData.persona.id,
-            searchText: 'Achieved breakthrough results',
-            // embedding will be set via raw SQL
-            significanceScore: 0.9,
-            createdAt: new Date(now.getTime() - 3600000), // 1 hour ago
-            memoryType: 'emotional',
-            contentType: 'text',
-          },
-        }),
-      ]);
+        });
+
+        await prisma.$executeRaw`
+          UPDATE "Memory" 
+          SET embedding = ${EmbeddingService.formatVectorForPg(embedding)}::vector
+          WHERE id = ${memory.id}::uuid
+        `;
+
+        temporalMemories.push(memory);
+      }
 
       // Build associations
       for (const memory of temporalMemories) {
@@ -315,7 +421,7 @@ describe('MemoryGraphService - Real Database Integration', () => {
 
       const chains = await service.findTemporalChains(
         testData.persona.id,
-        7200000, // 2 hour gaps
+        2, // minimum 2 memories in chain
       );
 
       expect(Array.isArray(chains)).toBe(true);
@@ -333,6 +439,7 @@ describe('MemoryGraphService - Real Database Integration', () => {
     it('should find networks of emotionally connected memories', async () => {
       // Create memories with emotional states
       const prisma = getTestPrisma();
+      const embeddingService = new EmbeddingService();
 
       // First create emotional states
       const emotionalState1 = await prisma.emotionalState.create({
@@ -344,30 +451,42 @@ describe('MemoryGraphService - Real Database Integration', () => {
       });
 
       // Create memories linked to emotional states
-      const emotionalMemories = await Promise.all([
-        prisma.memory.create({
+      const emotionalMemoryData = [
+        {
+          searchText: 'Feeling excited about new project opportunities',
+          significanceScore: 0.8,
+          emotionalStateId: emotionalState1.id,
+        },
+        {
+          searchText: 'Satisfied with completed work quality',
+          significanceScore: 0.7,
+          emotionalStateId: emotionalState2.id,
+        },
+      ];
+
+      const emotionalMemories = [];
+      for (const data of emotionalMemoryData) {
+        const embedding = await embeddingService.embed(data.searchText);
+
+        const memory = await prisma.memory.create({
           data: {
             personaId: testData.persona.id,
-            searchText: 'Feeling excited about new project opportunities',
-            // embedding will be set via raw SQL
-            significanceScore: 0.8,
-            emotionalStateId: emotionalState1.id,
+            searchText: data.searchText,
+            significanceScore: data.significanceScore,
+            emotionalStateId: data.emotionalStateId,
             memoryType: 'emotional',
             contentType: 'text',
           },
-        }),
-        prisma.memory.create({
-          data: {
-            personaId: testData.persona.id,
-            searchText: 'Satisfied with completed work quality',
-            // embedding will be set via raw SQL
-            significanceScore: 0.7,
-            emotionalStateId: emotionalState2.id,
-            memoryType: 'emotional',
-            contentType: 'text',
-          },
-        }),
-      ]);
+        });
+
+        await prisma.$executeRaw`
+          UPDATE "Memory" 
+          SET embedding = ${EmbeddingService.formatVectorForPg(embedding)}::vector
+          WHERE id = ${memory.id}::uuid
+        `;
+
+        emotionalMemories.push(memory);
+      }
 
       // Build associations
       for (const memory of emotionalMemories) {

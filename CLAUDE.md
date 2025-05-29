@@ -94,7 +94,7 @@ The application's business logic is organized in `/persona-memory-mcp/src/servic
   - `memory-formation.service.ts` - Creates memories from conversations
   - `memory-consolidation.service.ts` - Handles memory decay and strengthening
   - `agentic-retrieval.service.ts` - Multi-pass RAG retrieval system
-  - `memory-graph.service.ts` - Graph traversal for memory associations
+  - `memory-graph.service.ts` - **PostgreSQL-optimized graph operations** for memory associations with bidirectional edge storage
 
 - **Persona Management**:
 
@@ -112,8 +112,10 @@ The application's business logic is organized in `/persona-memory-mcp/src/servic
 
 The database uses 35+ tables to comprehensively model personas. Key aspects:
 
-- Vector embeddings for semantic search
-- Graph-like memory associations using PostgreSQL CTEs
+- Vector embeddings for semantic search (pgvector)
+- **Bidirectional memory associations** with PostgreSQL CHECK constraints ensuring `memoryA < memoryB`
+- **PostgreSQL-native temporal calculations** using INTERVAL and EXTRACT functions
+- Recursive CTEs for efficient graph traversal
 - Flexible JSON fields for extensibility
 - Support for multi-modal content (text, images, audio, video)
 
@@ -121,9 +123,11 @@ The database uses 35+ tables to comprehensively model personas. Key aspects:
 
 1. **No hardcoding** - All traits, emotions, and states are discovered dynamically
 2. **Raw content preservation** - Maintains original context, especially for intimate memories
-3. **Graph-like associations** - Complex memory connections using recursive CTEs
-4. **Agentic multi-pass retrieval** - Deep context understanding through iterative refinement
-5. **Flexible schema** - JSON fields allow extension without migrations
+3. **PostgreSQL-optimized graph operations** - Bidirectional associations with O(n) incremental processing
+4. **Database-layer temporal logic** - Leverage PostgreSQL's native time functions for performance
+5. **Agentic multi-pass retrieval** - Deep context understanding through iterative refinement
+6. **Flexible schema** - JSON fields allow extension without migrations
+7. **Proper validation over coalescing** - Fail fast on invalid data rather than masking issues
 
 ## Scientific Foundation for Dynamic Services
 

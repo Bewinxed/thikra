@@ -1,6 +1,6 @@
-import { execSync } from 'child_process';
+import { execSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
-import type { Persona, Entity, EmotionType, DesireCategory } from '@prisma/client';
+import type { DesireCategory, EmotionType, Entity, Persona } from '@prisma/client';
 
 /**
  * Test database setup and cleanup utilities
@@ -139,7 +139,7 @@ export class TestDatabaseSetup {
         update: {},
         create: {
           category: 'personal',
-          name: 'Personal Boundary', 
+          name: 'Personal Boundary',
           description: 'Personal comfort and privacy limits',
         },
       }),

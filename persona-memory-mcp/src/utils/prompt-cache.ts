@@ -1,6 +1,6 @@
-import * as crypto from 'crypto';
-import { promises as fs } from 'fs';
-import * as path from 'path';
+import * as crypto from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
 
 interface PromptCacheEntry {
   timestamp: string;
@@ -93,7 +93,7 @@ export class PromptCache {
     content += `**Timestamp:** ${entry.timestamp}\n\n`;
 
     if (entry.metadata) {
-      content += `## Metadata\n\n`;
+      content += '## Metadata\n\n';
       if (entry.metadata.model) content += `- **Model:** ${entry.metadata.model}\n`;
       if (entry.metadata.tokens) {
         content += `- **Tokens:** ${entry.metadata.tokens.input || 0} in / ${entry.metadata.tokens.output || 0} out\n`;
@@ -113,7 +113,11 @@ export class PromptCache {
   /**
    * Load a cached prompt/response pair
    */
-  async load(functionName: string, prompt: string, schemaVersion?: string): Promise<PromptCacheEntry | null> {
+  async load(
+    functionName: string,
+    prompt: string,
+    schemaVersion?: string,
+  ): Promise<PromptCacheEntry | null> {
     await this.init();
 
     const filename = this.generateFilename(functionName, prompt, schemaVersion);

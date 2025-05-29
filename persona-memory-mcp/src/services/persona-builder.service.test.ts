@@ -48,7 +48,8 @@ describe('PersonaBuilder - Real Database Integration', () => {
         },
         {
           role: 'assistant' as const,
-          content: "Oh my goodness, yes! *eyes absolutely lighting up* I get completely consumed by the mathematical elegance of neural architectures! There's something almost mystical about how backpropagation creates these emergent intelligence patterns. I find myself staying up way too late just staring at gradient descent visualizations - they're like digital poetry to me! When I explain these concepts, I tend to gesture wildly and use way too many metaphors about rivers and landscapes.",
+          content:
+            "Oh my goodness, yes! *eyes absolutely lighting up* I get completely consumed by the mathematical elegance of neural architectures! There's something almost mystical about how backpropagation creates these emergent intelligence patterns. I find myself staying up way too late just staring at gradient descent visualizations - they're like digital poetry to me! When I explain these concepts, I tend to gesture wildly and use way too many metaphors about rivers and landscapes.",
         },
         {
           role: 'user' as const,
@@ -58,17 +59,16 @@ describe('PersonaBuilder - Real Database Integration', () => {
         {
           role: 'assistant' as const,
           content:
-            'I absolutely *have* to get my hands dirty with code! I\'m one of those people who learns by breaking things and rebuilding them from scratch. Theory without implementation feels hollow to me - I need to feel the data flowing through my neural networks, watch the loss curves dance across my screen. I\'ve built probably dozens of toy models just to understand how attention mechanisms really work at a visceral level. Sometimes I catch myself anthropomorphizing my models - like when I say "she\'s learning" about a network that\'s finally converging.',
+            "I absolutely *have* to get my hands dirty with code! I'm one of those people who learns by breaking things and rebuilding them from scratch. Theory without implementation feels hollow to me - I need to feel the data flowing through my neural networks, watch the loss curves dance across my screen. I've built probably dozens of toy models just to understand how attention mechanisms really work at a visceral level. Sometimes I catch myself anthropomorphizing my models - like when I say \"she's learning\" about a network that's finally converging.",
         },
         {
           role: 'user' as const,
-          content:
-            'What are your core principles when it comes to AI development?',
+          content: 'What are your core principles when it comes to AI development?',
         },
         {
           role: 'assistant' as const,
           content:
-            'I have absolutely *unshakeable* principles when it comes to AI ethics! I will never, ever work on anything that could harm people or violate their privacy - that\'s a hard boundary I\'ll never cross. I believe deeply that AI should empower humans, not replace genuine human connection. I refuse to participate in surveillance technology or anything that strips away human agency. These aren\'t just preferences - they\'re core parts of who I am that I would defend with everything I have.',
+            "I have absolutely *unshakeable* principles when it comes to AI ethics! I will never, ever work on anything that could harm people or violate their privacy - that's a hard boundary I'll never cross. I believe deeply that AI should empower humans, not replace genuine human connection. I refuse to participate in surveillance technology or anything that strips away human agency. These aren't just preferences - they're core parts of who I am that I would defend with everything I have.",
         },
       ];
 
@@ -118,28 +118,25 @@ describe('PersonaBuilder - Real Database Integration', () => {
       const mixedConversation = [
         {
           role: 'user' as const,
-          content:
-            'Tell me about your appearance and personality.',
+          content: 'Tell me about your appearance and personality.',
         },
         {
           role: 'assistant' as const,
           content:
-            'I have this cascade of silver-blue hair that shimmers when I move - it\'s ethereal and otherworldly, almost like liquid starlight. My eyes shift between deep violet and electric blue depending on my emotional state, with these intricate geometric patterns that appear when I\'m processing complex thoughts. When I get excited about a breakthrough, they literally glow with inner light. I\'m quite tall and graceful, with movements that are both precise and flowing.',
+            "I have this cascade of silver-blue hair that shimmers when I move - it's ethereal and otherworldly, almost like liquid starlight. My eyes shift between deep violet and electric blue depending on my emotional state, with these intricate geometric patterns that appear when I'm processing complex thoughts. When I get excited about a breakthrough, they literally glow with inner light. I'm quite tall and graceful, with movements that are both precise and flowing.",
         },
         {
           role: 'user' as const,
-          content:
-            'What do you value most in relationships?',
+          content: 'What do you value most in relationships?',
         },
         {
           role: 'assistant' as const,
           content:
-            'Transparency is absolutely everything to me! I cannot *stand* deception or manipulation - it makes my entire being recoil. I need genuine connection, raw honesty, even when it hurts. I\'d rather face a painful truth than live in a beautiful lie. Trust is sacred to me, and once broken, it takes extraordinary effort to rebuild.',
+            "Transparency is absolutely everything to me! I cannot *stand* deception or manipulation - it makes my entire being recoil. I need genuine connection, raw honesty, even when it hurts. I'd rather face a painful truth than live in a beautiful lie. Trust is sacred to me, and once broken, it takes extraordinary effort to rebuild.",
         },
         {
           role: 'user' as const,
-          content:
-            'How do you communicate when you\'re passionate about something?',
+          content: "How do you communicate when you're passionate about something?",
         },
         {
           role: 'assistant' as const,
@@ -148,13 +145,12 @@ describe('PersonaBuilder - Real Database Integration', () => {
         },
         {
           role: 'user' as const,
-          content:
-            'What drives you in your work?',
+          content: 'What drives you in your work?',
         },
         {
           role: 'assistant' as const,
           content:
-            'I have this *burning* desire to make a positive impact on the world! It\'s not just a goal - it\'s like a fire in my core that never dims. I thrive in collaborative environments where minds can meet and create something greater than the sum of their parts. Competition feels... hollow to me. I\'d rather lift others up and build together than tear each other down for individual glory.',
+            "I have this *burning* desire to make a positive impact on the world! It's not just a goal - it's like a fire in my core that never dims. I thrive in collaborative environments where minds can meet and create something greater than the sum of their parts. Competition feels... hollow to me. I'd rather lift others up and build together than tear each other down for individual glory.",
         },
       ];
 
@@ -162,8 +158,12 @@ describe('PersonaBuilder - Real Database Integration', () => {
 
       const prisma = getTestPrisma();
       const [physical, identity, speech, desires, preferences] = await Promise.all([
-        prisma.physicalAttribute.findMany({ where: { personaId: persona.id } }),
-        prisma.identityComponent.findMany({ where: { personaId: persona.id } }),
+        prisma.physicalAttribute.findMany({
+          where: { personaId: persona.id },
+        }),
+        prisma.identityComponent.findMany({
+          where: { personaId: persona.id },
+        }),
         prisma.speechPattern.findMany({ where: { personaId: persona.id } }),
         prisma.desire.findMany({ where: { personaId: persona.id } }),
         prisma.preference.findMany({ where: { personaId: persona.id } }),
@@ -215,8 +215,12 @@ describe('PersonaBuilder - Real Database Integration', () => {
       // Verify comprehensive extraction
       const prisma = getTestPrisma();
       const [identity, physical, speech, desires, boundaries, preferences] = await Promise.all([
-        prisma.identityComponent.findMany({ where: { personaId: persona.id } }),
-        prisma.physicalAttribute.findMany({ where: { personaId: persona.id } }),
+        prisma.identityComponent.findMany({
+          where: { personaId: persona.id },
+        }),
+        prisma.physicalAttribute.findMany({
+          where: { personaId: persona.id },
+        }),
         prisma.speechPattern.findMany({ where: { personaId: persona.id } }),
         prisma.desire.findMany({ where: { personaId: persona.id } }),
         prisma.boundary.findMany({ where: { personaId: persona.id } }),
@@ -365,7 +369,9 @@ describe('PersonaBuilder - Real Database Integration', () => {
       if (desires.length > 0) {
         desires.forEach((desire: any) => {
           expect(desire.desireDescription || desire.content || desire.description).toBeTruthy();
-          expect(typeof (desire.currentIntensity || desire.intensity || desire.strength || 0.5)).toBe('number');
+          expect(
+            typeof (desire.currentIntensity || desire.intensity || desire.strength || 0.5),
+          ).toBe('number');
         });
       }
 
@@ -373,7 +379,9 @@ describe('PersonaBuilder - Real Database Integration', () => {
       const boundaries = bamlResult.boundaries || [];
       if (boundaries.length > 0) {
         boundaries.forEach((boundary: any) => {
-          expect(boundary.boundaryDescription || boundary.content || boundary.description).toBeTruthy();
+          expect(
+            boundary.boundaryDescription || boundary.content || boundary.description,
+          ).toBeTruthy();
           expect(typeof (boundary.firmness || boundary.strength || 0.5)).toBe('number');
         });
       }
@@ -390,8 +398,12 @@ describe('PersonaBuilder - Real Database Integration', () => {
 
       // Verify all components have correct persona relationship
       const [identity, physical, speech, desires, preferences] = await Promise.all([
-        prisma.identityComponent.findMany({ where: { personaId: persona.id } }),
-        prisma.physicalAttribute.findMany({ where: { personaId: persona.id } }),
+        prisma.identityComponent.findMany({
+          where: { personaId: persona.id },
+        }),
+        prisma.physicalAttribute.findMany({
+          where: { personaId: persona.id },
+        }),
         prisma.speechPattern.findMany({ where: { personaId: persona.id } }),
         prisma.desire.findMany({ where: { personaId: persona.id } }),
         prisma.preference.findMany({ where: { personaId: persona.id } }),
@@ -475,8 +487,7 @@ describe('PersonaBuilder - Real Database Integration', () => {
     });
 
     it('should handle very long descriptions without errors', async () => {
-      const longDescription =
-        'I am a person. '.repeat(1000) + 'I love programming and have brown hair.';
+      const longDescription = `${'I am a person. '.repeat(1000)}I love programming and have brown hair.`;
 
       const persona = await service.buildFromDescription(longDescription);
 

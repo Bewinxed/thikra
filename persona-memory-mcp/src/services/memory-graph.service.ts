@@ -1,26 +1,18 @@
-import type {
-  EmotionalState,
-  EmotionalStateComponent,
-  Memory,
-  MemoryAssociation,
-  PrismaClient,
-} from '@prisma/client';
+import type { Memory, PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 
-// pgvector embedding type - stored as vector(768) but accessed as number[] or string
-type Embedding = number[] | string | null;
-
-interface MemoryWithEmbedding extends Memory {
-  embedding: Embedding;
-}
-
-interface MemoryWithEmotionalState extends MemoryWithEmbedding {
-  emotionalState?:
-    | (EmotionalState & {
-        components: EmotionalStateComponent[];
-      })
-    | null;
-}
+// Use Prisma's generated types with proper includes
+type MemoryWithEmotionalState = Prisma.MemoryGetPayload<{
+  include: {
+    emotionalState: {
+      include: {
+        components: true;
+      };
+    };
+  };
+}> & {
+  embedding?: number[] | string | null; // Add embedding field for raw queries
+};
 
 export interface AssociationParams {
   memoryId: string;
@@ -40,9 +32,24 @@ export class MemoryGraphService {
   constructor(private prisma: PrismaClient) {}
 
   /**
-   * Build associations for a newly created memory
+   * Helper method to create associations with consistent ordering
    */
-  async buildAssociationsForMemory(memoryId: string): Promise<void> {
+  private createAssociation(memoryIdA: string, memoryIdB: string, type: string, strength: number) {
+    const [memoryA, memoryB] = [memoryIdA, memoryIdB].sort() as [string, string];
+    return {
+      memoryA,
+      memoryB,
+      associationType: type,
+      strength,
+      metadata: {},
+    };
+  }
+
+  /**
+   * Build associations for a newly created memory using incremental processing
+   * Only processes the new memory against existing memories to avoid O(n²) complexity
+   */
+  async buildAssociationsForNewMemory(memoryId: string): Promise<void> {
     // Get memory with raw query to include embedding field
     const [memory] = await this.prisma.$queryRaw<Array<MemoryWithEmotionalState>>`
       SELECT m.id, 
@@ -107,20 +114,34 @@ export class MemoryGraphService {
       ...referenceAssocs,
     ];
 
-    // Filter out weak associations and create them in the database
-    const strongAssociations = allAssociations.filter((assoc) => assoc.strength >= 0.3);
+    // Filter out weak associations and ensure consistent ordering
+    const strongAssociations = allAssociations
+      .filter((assoc) => assoc.strength >= 0.3)
+      .map((assoc) => {
+        // Ensure memoryA < memoryB for consistent bidirectional storage
+        const [memoryA, memoryB] = [assoc.memoryA, assoc.memoryB].sort() as [string, string];
+        return {
+          memoryA,
+          memoryB,
+          associationType: assoc.associationType,
+          associationStrength: assoc.strength,
+        };
+      });
 
     if (strongAssociations.length > 0) {
       await this.prisma.memoryAssociation.createMany({
-        data: strongAssociations.map((assoc) => ({
-          memoryA: assoc.memoryA,
-          memoryB: assoc.memoryB,
-          associationType: assoc.associationType,
-          associationStrength: assoc.strength,
-        })),
+        data: strongAssociations,
         skipDuplicates: true,
       });
     }
+  }
+
+  /**
+   * Backward compatibility method - delegates to new incremental method
+   * @deprecated Use buildAssociationsForNewMemory instead
+   */
+  async buildAssociationsForMemory(memoryId: string): Promise<void> {
+    return this.buildAssociationsForNewMemory(memoryId);
   }
 
   /**
@@ -148,57 +169,50 @@ export class MemoryGraphService {
     `;
 
     return similarMemories
-      .filter((m) => m.similarity > 0.8) // High similarity threshold
-      .map((m) => ({
-        memoryA: memory.id,
-        memoryB: m.id,
-        associationType: 'semantic',
-        strength: m.similarity,
-        metadata: { similarity_score: m.similarity },
-      }));
+      .filter((m) => m.similarity < 0.8) // pgvector uses distance (lower = more similar)
+      .map((m) =>
+        this.createAssociation(
+          memory.id,
+          m.id,
+          'semantic',
+          Math.max(0, 1 - m.similarity), // Convert distance to similarity
+        ),
+      );
   }
 
   /**
    * Find temporally related memories (before/after, same time period)
+   * Uses PostgreSQL temporal functions for efficient calculation
    */
-  private async findTemporalAssociations(memory: Memory) {
+  private async findTemporalAssociations(memory: MemoryWithEmotionalState) {
     if (!memory.occurredAt) {
       return [];
     }
 
-    const timeWindow = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-    const startTime = new Date((memory.occurredAt?.getTime() || 0) - timeWindow);
-    const endTime = new Date((memory.occurredAt?.getTime() || 0) + timeWindow);
+    // Use PostgreSQL to calculate temporal proximity and strength
+    const temporalMemories = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        time_diff_hours: number;
+        temporal_strength: number;
+      }>
+    >`
+      SELECT 
+        m.id,
+        ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / 3600.0 as time_diff_hours,
+        GREATEST(0, 1 - (ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / 86400.0)) as temporal_strength
+      FROM "Memory" m
+      WHERE m."personaId" = ${memory.personaId}::uuid
+        AND m.id != ${memory.id}::uuid
+        AND m."occurredAt" IS NOT NULL
+        AND ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) <= 86400 -- Within 24 hours (86400 seconds)
+      ORDER BY ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) ASC
+      LIMIT 20
+    `;
 
-    const temporalMemories = await this.prisma.memory.findMany({
-      where: {
-        personaId: memory.personaId,
-        id: { not: memory.id },
-        occurredAt: {
-          gte: startTime,
-          lte: endTime,
-        },
-      },
-      take: 20,
-    });
-
-    return temporalMemories.map((m) => {
-      // Calculate temporal proximity (closer in time = stronger association)
-      const timeDiff = Math.abs(
-        (m.occurredAt?.getTime() || 0) - (memory.occurredAt?.getTime() || 0),
-      );
-      const strength = Math.max(0, 1 - timeDiff / timeWindow);
-
-      return {
-        memoryA: memory.id,
-        memoryB: m.id,
-        associationType: 'temporal',
-        strength,
-        metadata: {
-          time_difference_hours: timeDiff / (60 * 60 * 1000),
-        },
-      };
-    });
+    return temporalMemories
+      .filter((m) => m.temporal_strength > 0)
+      .map((m) => this.createAssociation(memory.id, m.id, 'temporal', m.temporal_strength));
   }
 
   /**
@@ -253,23 +267,14 @@ export class MemoryGraphService {
       const avgIntensity =
         sharedEmotions.reduce((sum, e) => sum + e.intensity, 0) / (sharedEmotions.length || 1);
 
-      return {
-        memoryA: memory.id,
-        memoryB: m.id,
-        associationType: 'emotional',
-        strength: avgIntensity,
-        metadata: {
-          shared_emotions: sharedEmotions.length,
-          emotion_types: sharedEmotions.map((e) => e.emotionTypeId),
-        },
-      };
+      return this.createAssociation(memory.id, m.id, 'emotional', avgIntensity);
     });
   }
 
   /**
    * Find memories that reference or are referenced by this memory
    */
-  private async findReferenceAssociations(memory: Memory) {
+  private async findReferenceAssociations(memory: MemoryWithEmotionalState) {
     const referencedIds = this.extractMemoryReferences(memory.searchText || '');
 
     if (referencedIds.length === 0) {
@@ -297,24 +302,12 @@ export class MemoryGraphService {
 
     // Add forward references (this -> other)
     for (const refMemory of referencedMemories) {
-      associations.push({
-        memoryA: memory.id,
-        memoryB: refMemory.id,
-        associationType: 'reference',
-        strength: 0.9,
-        metadata: { direction: 'forward' },
-      });
+      associations.push(this.createAssociation(memory.id, refMemory.id, 'reference', 0.9));
     }
 
     // Add backward references (other -> this)
     for (const refMemory of referencingMemories) {
-      associations.push({
-        memoryA: refMemory.id,
-        memoryB: memory.id,
-        associationType: 'reference',
-        strength: 0.9,
-        metadata: { direction: 'backward' },
-      });
+      associations.push(this.createAssociation(refMemory.id, memory.id, 'reference', 0.9));
     }
 
     return associations;
@@ -404,7 +397,7 @@ export class MemoryGraphService {
           "associationStrength" as strength,
           ARRAY["associationType"]::varchar[] as types,
           1 as depth
-        FROM "MemoryAssociation"
+        FROM "memory_associations"
         WHERE ("memoryA" = ${startMemoryId}::uuid OR "memoryB" = ${startMemoryId}::uuid)
           AND "associationStrength" >= 0.3
         
@@ -424,7 +417,7 @@ export class MemoryGraphService {
           mp.types || ma."associationType",
           mp.depth + 1
         FROM memory_paths mp
-        JOIN "MemoryAssociation" ma ON (
+        JOIN "memory_associations" ma ON (
           ma."memoryA" = mp.current_memory::uuid OR ma."memoryB" = mp.current_memory::uuid
         )
         WHERE mp.depth < ${maxDepth}
@@ -498,7 +491,7 @@ export class MemoryGraphService {
           END,
           mc.path_strength * ma."associationStrength"
         FROM memory_clusters mc
-        JOIN "MemoryAssociation" ma ON 
+        JOIN "memory_associations" ma ON 
           (ma."memoryA" = mc.memory_id OR ma."memoryB" = mc.memory_id)
         WHERE ma."associationStrength" >= 0.6
           AND mc.cluster_size < 10
@@ -568,13 +561,13 @@ export class MemoryGraphService {
           EXTRACT(EPOCH FROM (m2."occurredAt" - m1."occurredAt")) / 3600 as duration_hours,
           array[m1.id, m2.id]::text[] as chain
         FROM "Memory" m1
-        JOIN "MemoryAssociation" ma ON m1.id = ma."memoryA"
+        JOIN "memory_associations" ma ON m1.id = ma."memoryA"
         JOIN "Memory" m2 ON ma."memoryB" = m2.id
         WHERE m1."personaId" = ${personaId}::uuid
           AND m2."personaId" = ${personaId}::uuid
           AND ma."associationType" = 'temporal'
           AND m1."occurredAt" < m2."occurredAt"
-          AND EXTRACT(EPOCH FROM (m2."occurredAt" - m1."occurredAt")) / 3600 < 24 -- Within 24 hours
+          AND m2."occurredAt" - m1."occurredAt" <= INTERVAL '24 hours' -- Within 24 hours
       ),
       extended_chains AS (
         SELECT 
@@ -583,23 +576,23 @@ export class MemoryGraphService {
           m3."occurredAt" as next_time,
           array_append(tc.chain, m3.id::text) as extended_chain
         FROM temporal_chains tc
-        JOIN "MemoryAssociation" ma2 ON tc.end_memory = ma2."memoryA"
+        JOIN "memory_associations" ma2 ON tc.end_memory = ma2."memoryA"
         JOIN "Memory" m3 ON ma2."memoryB" = m3.id
         WHERE ma2."associationType" = 'temporal'
           AND m3."occurredAt" > tc.end_time
-          AND EXTRACT(EPOCH FROM (m3."occurredAt" - tc.end_time)) / 3600 < 24
+          AND m3."occurredAt" - tc.end_time <= INTERVAL '24 hours'
       )
       SELECT 
         ROW_NUMBER() OVER (ORDER BY array_length(chain, 1) DESC, start_time) as chain_id,
         array_to_string(chain, ',') as memory_ids,
         start_time,
-        COALESCE(next_time, end_time) as end_time,
-        EXTRACT(EPOCH FROM (COALESCE(next_time, end_time) - start_time)) / 3600 as duration_hours
+        end_time,
+        duration_hours
       FROM (
-        SELECT * FROM temporal_chains
+        SELECT start_memory, end_memory, start_time, end_time, duration_hours, chain FROM temporal_chains
         UNION ALL
         SELECT start_memory, next_memory as end_memory, start_time, next_time as end_time, 
-               EXTRACT(EPOCH FROM (next_time - start_time)) / 3600 as duration_hours, extended_chain as chain
+               EXTRACT(EPOCH FROM (next_time - start_time)) / 3600.0 as duration_hours, extended_chain as chain
         FROM extended_chains
       ) all_chains
       WHERE array_length(chain, 1) >= ${minChainLength}
@@ -607,13 +600,19 @@ export class MemoryGraphService {
       LIMIT 20
     `;
 
-    return chains.map((c) => ({
-      chainId: Number(c.chain_id),
-      memories: c.memory_ids.split(','),
-      startTime: c.start_time,
-      endTime: c.end_time,
-      duration: c.duration_hours,
-    }));
+    return chains.map((c) => {
+      const duration = Number(c.duration_hours);
+      if (Number.isNaN(duration) || duration < 0) {
+        throw new Error(`Invalid temporal chain duration: ${c.duration_hours} for chain ${c.chain_id}`);
+      }
+      return {
+        chainId: Number(c.chain_id),
+        memories: c.memory_ids.split(','),
+        startTime: c.start_time,
+        endTime: c.end_time,
+        duration,
+      };
+    });
   }
 
   /**
@@ -630,7 +629,9 @@ export class MemoryGraphService {
       emotionalIntensity: number;
     }>
   > {
-    const whereClause = emotionName ? Prisma.sql`AND et."emotionName" = ${emotionName}` : Prisma.empty;
+    const whereClause = emotionName
+      ? Prisma.sql`AND et."emotionName" = ${emotionName}`
+      : Prisma.empty;
 
     const networks = await this.prisma.$queryRaw<
       Array<{
@@ -660,7 +661,7 @@ export class MemoryGraphService {
           array_agg(DISTINCT em2.memory_id) as network_memories,
           AVG((em1.intensity + em2.intensity) / 2) as avg_intensity
         FROM emotion_memories em1
-        JOIN "MemoryAssociation" ma ON em1.memory_id = ma."memoryA"
+        JOIN "memory_associations" ma ON em1.memory_id = ma."memoryA"
         JOIN emotion_memories em2 ON ma."memoryB" = em2.memory_id
         WHERE em1."emotionName" = em2."emotionName"
           OR em1."primaryEmotion" = em2."primaryEmotion"
@@ -730,7 +731,7 @@ export class MemoryGraphService {
           cmp.strength * ma."associationStrength",
           cmp.depth + 1
         FROM cross_modal_paths cmp
-        JOIN "MemoryAssociation" ma ON cmp.current_memory = ma."memoryA"
+        JOIN "memory_associations" ma ON cmp.current_memory = ma."memoryA"
         JOIN "Memory" m2 ON ma."memoryB" = m2.id
         WHERE cmp.depth < 5
           AND NOT m2.id::text = ANY(cmp.path)

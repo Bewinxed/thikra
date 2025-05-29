@@ -51,7 +51,9 @@ export class StateManagementService {
    * Get multiple states for a persona
    */
   async getStates(personaId: string, stateKeys?: string[]): Promise<Record<string, JsonValue>> {
-    const where: { personaId: string; stateKey?: { in: string[] } } = { personaId };
+    const where: { personaId: string; stateKey?: { in: string[] } } = {
+      personaId,
+    };
     if (stateKeys && stateKeys.length > 0) {
       where.stateKey = { in: stateKeys };
     }
@@ -186,7 +188,11 @@ export class StateManagementService {
    * Get all states for a persona with optional time filtering
    */
   async getPersonaStates(query: StateQuery): Promise<PersonaState[]> {
-    const where: { personaId: string; stateKey?: { in: string[] }; lastUpdated?: { gte: Date } } = {
+    const where: {
+      personaId: string;
+      stateKey?: { in: string[] };
+      lastUpdated?: { gte: Date };
+    } = {
       personaId: query.personaId,
     };
 

@@ -613,9 +613,12 @@ export class PersonalityMonitorService {
     return null;
   }
 
-  private detectContextPatterns(
-    observations: PersonalityObservation[],
-  ): Array<{ context: string; avgValue: number; consistency: number; sampleSize: number }> {
+  private detectContextPatterns(observations: PersonalityObservation[]): Array<{
+    context: string;
+    avgValue: number;
+    consistency: number;
+    sampleSize: number;
+  }> {
     const patterns = [];
     const contextGroups = new Map<string, number[]>();
 

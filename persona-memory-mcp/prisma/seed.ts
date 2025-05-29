@@ -274,11 +274,27 @@ async function main() {
 
   // Torso sub-parts
   const torsoSubParts = [
-    { partName: 'chest', partCategory: 'torso_section', parentPartId: torso.id },
-    { partName: 'breasts', partCategory: 'torso_feature', parentPartId: torso.id },
-    { partName: 'stomach', partCategory: 'torso_section', parentPartId: torso.id },
+    {
+      partName: 'chest',
+      partCategory: 'torso_section',
+      parentPartId: torso.id,
+    },
+    {
+      partName: 'breasts',
+      partCategory: 'torso_feature',
+      parentPartId: torso.id,
+    },
+    {
+      partName: 'stomach',
+      partCategory: 'torso_section',
+      parentPartId: torso.id,
+    },
     { partName: 'back', partCategory: 'torso_section', parentPartId: torso.id },
-    { partName: 'waist', partCategory: 'torso_section', parentPartId: torso.id },
+    {
+      partName: 'waist',
+      partCategory: 'torso_section',
+      parentPartId: torso.id,
+    },
     { partName: 'hips', partCategory: 'torso_section', parentPartId: torso.id },
   ];
 
@@ -317,10 +333,18 @@ async function main() {
   console.log('💫 Seeding desire categories...');
   const desireCategories = [
     { level: 1, name: 'physical', description: 'Physical and sensory desires' },
-    { level: 2, name: 'emotional', description: 'Emotional connection and security' },
+    {
+      level: 2,
+      name: 'emotional',
+      description: 'Emotional connection and security',
+    },
     { level: 3, name: 'social', description: 'Belonging and relationships' },
     { level: 4, name: 'esteem', description: 'Recognition and respect' },
-    { level: 5, name: 'self_actualization', description: 'Personal growth and fulfillment' },
+    {
+      level: 5,
+      name: 'self_actualization',
+      description: 'Personal growth and fulfillment',
+    },
   ];
 
   for (const category of desireCategories) {
@@ -349,13 +373,21 @@ async function main() {
       name: 'emotional_availability',
       description: 'Emotional openness and vulnerability',
     },
-    { category: 'emotional', name: 'trust_levels', description: 'Levels of trust and disclosure' },
+    {
+      category: 'emotional',
+      name: 'trust_levels',
+      description: 'Levels of trust and disclosure',
+    },
     {
       category: 'social',
       name: 'public_behavior',
       description: 'Behavior in public or group settings',
     },
-    { category: 'communication', name: 'topics', description: 'Conversation topics and depth' },
+    {
+      category: 'communication',
+      name: 'topics',
+      description: 'Conversation topics and depth',
+    },
     {
       category: 'communication',
       name: 'language',

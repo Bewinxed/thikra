@@ -80,22 +80,26 @@ export class PersonaBuilder {
     }
 
     try {
-      const crypto = require('crypto');
-      const fs = require('fs/promises');
-      const path = require('path');
+      const crypto = require('node:crypto');
+      const fs = require('node:fs/promises');
+      const path = require('node:path');
 
       // Read BAML files and create hash
       const bamlDir = path.join(process.cwd(), 'baml_src');
       const files = await fs.readdir(bamlDir);
       const bamlFiles = files.filter((f: string) => f.endsWith('.baml')).sort();
-      
+
       let combinedContent = '';
       for (const file of bamlFiles) {
         const content = await fs.readFile(path.join(bamlDir, file), 'utf-8');
         combinedContent += content;
       }
-      
-      this.bamlSchemaHash = crypto.createHash('md5').update(combinedContent).digest('hex').substring(0, 8);
+
+      this.bamlSchemaHash = crypto
+        .createHash('md5')
+        .update(combinedContent)
+        .digest('hex')
+        .substring(0, 8);
       return this.bamlSchemaHash;
     } catch (error) {
       // Fallback if BAML files can't be read
@@ -105,7 +109,11 @@ export class PersonaBuilder {
 
   // Build persona from conversation history - main entry point
   async buildFromConversation(
-    conversationHistory: Array<{ role: string; content: string; timestamp?: Date }>,
+    conversationHistory: Array<{
+      role: string;
+      content: string;
+      timestamp?: Date;
+    }>,
   ): Promise<Persona> {
     const personaId = uuidv4();
 
@@ -121,9 +129,7 @@ export class PersonaBuilder {
     // Multi-pass extraction for completeness (TODO.md Phase 4.2)
     // Extract from assistant messages (the LLM's responses show its personality)
     const assistantMessages = conversationHistory.filter((m) => m.role === 'assistant');
-    const allContent = assistantMessages
-      .map((m) => m.content)
-      .join('\n\n');
+    const allContent = assistantMessages.map((m) => m.content).join('\n\n');
 
     const extraction = await this.multiPassExtraction(allContent);
     await this.saveExtractionResults(personaId, extraction);
@@ -156,7 +162,7 @@ export class PersonaBuilder {
     extractFn: () => Promise<T>,
   ): Promise<T> {
     const schemaHash = await this.getBamlSchemaHash();
-    
+
     // Try to load from cache first
     const cached = await this.promptCache.load(functionName, content, schemaHash);
     if (cached) {
@@ -291,7 +297,7 @@ export class PersonaBuilder {
           where: { id: attrData.bodyPartId },
         });
         if (!bodyPartExists) {
-          delete attrData.bodyPartId;
+          attrData.bodyPartId = undefined;
         }
       }
       await this.prisma.physicalAttribute.create({
@@ -322,7 +328,7 @@ export class PersonaBuilder {
           where: { id: desireData.desireCategoryId },
         });
         if (!categoryExists) {
-          delete desireData.desireCategoryId;
+          desireData.desireCategoryId = undefined;
         }
       }
       await this.prisma.desire.create({
@@ -346,16 +352,16 @@ export class PersonaBuilder {
           where: { id: boundaryData.boundaryTypeId },
         });
         if (!boundaryTypeExists) {
-          delete boundaryData.boundaryTypeId;
+          boundaryData.boundaryTypeId = undefined;
         }
       }
-      // Validate appliesToEntityId against existing entities  
+      // Validate appliesToEntityId against existing entities
       if (boundaryData.appliesToEntityId) {
         const entityExists = await this.prisma.entity.findUnique({
           where: { id: boundaryData.appliesToEntityId },
         });
         if (!entityExists) {
-          delete boundaryData.appliesToEntityId;
+          boundaryData.appliesToEntityId = undefined;
         }
       }
       await this.prisma.boundary.create({

@@ -412,9 +412,12 @@ model MemoryAssociation {
   memoryARelation Memory @relation("MemoryA", fields: [memoryA], references: [id], onDelete: Cascade)
   memoryBRelation Memory @relation("MemoryB", fields: [memoryB], references: [id], onDelete: Cascade)
 
-  @@unique([memoryA, memoryB])
-  @@check(sql: "memory_a < memory_b") // Ensure consistent ordering
+  @@unique([memoryA, memoryB, associationType])
+  @@index([memoryA, associationStrength(sort: Desc)])
+  @@index([memoryB, associationStrength(sort: Desc)])
+  @@index([memoryA, memoryB]) // For bidirectional queries
   @@map("memory_associations")
+  // Note: CHECK constraint memoryA < memoryB added via migration for bidirectional consistency
 }
 
 // Embodied memories - somatic experiences
@@ -1021,11 +1024,14 @@ model IdentityRelationship {
 // Ref: https://docs.anthropic.com/claude/docs/embeddings
 ```
 
-### 2. Memory Association Builder (memory-associations.service.ts)
+### 2. Memory Graph Service (memory-graph.service.ts) ✅ COMPLETED
 
 ```typescript
-// Creates graph-like structure using PostgreSQL
-// Uses recursive CTEs for traversal
+// PostgreSQL-optimized bidirectional graph operations
+// Incremental processing (O(n)) vs batch processing (O(n²))
+// Database-layer temporal calculations using INTERVAL and EXTRACT
+// Consistent edge ordering with CHECK constraints
+// Recursive CTEs for efficient graph traversal
 // Ref: https://www.postgresql.org/docs/current/queries-with.html
 ```
 
@@ -1075,13 +1081,15 @@ model IdentityRelationship {
 ## Critical Notes for Implementation
 
 1. **No Hardcoding**: Emotions, traits, states are all discovered dynamically
-2. **Graph in PostgreSQL**: Use recursive CTEs and associations table for graph queries
-3. **Agentic RAG**: Multiple retrieval passes with reflection - not single-pass
-4. **Memory Associations**: Critical for the "flow" of consciousness
-5. **State Tracking**: Any state mentioned by LLM gets auto-created and tracked
-6. **No Sanitization**: Preserve raw content, especially intimate memories
-7. **Flexible Schema**: Use JSON fields where needed for extensibility
-8. **LLM Integration**: Use calling LLM or Anthropic's services for processing
+2. **PostgreSQL-Optimized Graph**: Bidirectional associations with O(n) incremental processing
+3. **Database-Layer Temporal Logic**: Use PostgreSQL INTERVAL/EXTRACT vs app-layer calculations
+4. **Proper Validation**: Fail fast on invalid data rather than coalescing/masking issues
+5. **Agentic RAG**: Multiple retrieval passes with reflection - not single-pass
+6. **Memory Associations**: Critical for the "flow" of consciousness with consistent ordering
+7. **State Tracking**: Any state mentioned by LLM gets auto-created and tracked
+8. **No Sanitization**: Preserve raw content, especially intimate memories
+9. **Flexible Schema**: Use JSON fields where needed for extensibility
+10. **LLM Integration**: Use calling LLM or Anthropic's services for processing
 
 ## Database Indexes to Create
 

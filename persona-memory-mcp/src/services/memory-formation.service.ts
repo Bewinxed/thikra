@@ -829,27 +829,27 @@ export class MemoryFormationService {
   private hasEmotionalContent(content: string): boolean {
     // Skip very short content
     if (content.length < 10) return false;
-    
+
     // Skip generic system messages
     const lowerContent = content.toLowerCase().trim();
     const genericMessages = [
       'context updated',
-      'ok', 
-      'yes', 
-      'no', 
+      'ok',
+      'yes',
+      'no',
       'done',
       'loading',
       'error',
       'success',
       'saved',
-      'updated'
+      'updated',
     ];
-    
+
     if (genericMessages.includes(lowerContent)) return false;
-    
+
     // Need at least 3 words for meaningful emotional analysis
     if (content.trim().split(/\s+/).length < 3) return false;
-    
+
     return true;
   }
 

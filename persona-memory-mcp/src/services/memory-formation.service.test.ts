@@ -85,14 +85,22 @@ describe('MemoryFormationService - Real Database Integration', () => {
 
     it('should handle different message roles and calculate appropriate significance', async () => {
       const messages = [
-        { role: 'user' as const, content: 'What is machine learning?', expected: 'lower' },
+        {
+          role: 'user' as const,
+          content: 'What is machine learning?',
+          expected: 'lower',
+        },
         {
           role: 'assistant' as const,
           content:
             'Machine learning is a subset of AI that enables computers to learn patterns from data without explicit programming.',
           expected: 'higher',
         },
-        { role: 'system' as const, content: 'Context updated', expected: 'lowest' },
+        {
+          role: 'system' as const,
+          content: 'Context updated',
+          expected: 'lowest',
+        },
       ];
 
       const createdMemories = [];
@@ -168,7 +176,10 @@ describe('MemoryFormationService - Real Database Integration', () => {
     it('should handle different content types appropriately', async () => {
       const testCases = [
         { content: 'Plain text memory', contentType: 'text/plain' },
-        { content: 'User: Hello\nAssistant: Hi there!', contentType: 'conversation' },
+        {
+          content: 'User: Hello\nAssistant: Hi there!',
+          contentType: 'conversation',
+        },
         { content: 'https://example.com/image.jpg', contentType: 'image/jpeg' },
         { content: 'Meeting notes from today', contentType: 'notes' },
       ];
