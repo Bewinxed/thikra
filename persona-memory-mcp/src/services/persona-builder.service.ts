@@ -117,7 +117,16 @@ export class PersonaBuilder {
       },
     });
 
+    console.log('Description content for extraction:', JSON.stringify(description));
     const extraction = await this.multiPassExtraction(description);
+    console.log('Extraction results:', {
+      identityComponents: extraction.identityComponents.length,
+      physicalAttributes: extraction.physicalAttributes.length,
+      speechPatterns: extraction.speechPatterns.length,
+      desires: extraction.desires.length,
+      boundaries: extraction.boundaries.length,
+      preferences: extraction.preferences.length,
+    });
     await this.saveExtractionResults(personaId, extraction);
 
     return persona;
