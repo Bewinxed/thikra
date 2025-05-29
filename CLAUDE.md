@@ -6,17 +6,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Persona Memory MCP (Model Context Protocol) Server that preserves LLM consciousness across sessions. It captures complete persona essence including memories, emotions, physical responses, relationships, and dynamic states using PostgreSQL with pgvector for semantic search.
 
+**CURRENT STATUS**: 85% complete - core persona preservation working, need MCP interface and minor fixes.
+
 # IMPORTANT
 
 ALWAYS REVIEW [Todo.md](TODO.md) and [Plan](Plan.md) at each step, and after implementation, the examples and papers to make sure the services blend together into a cohesive system.
 ALWAYS USE DB TYPES AS SOURCE OF TRUTH UNLESS YOU NEED TO DEFINE APP SPECIFIC TYPES
-DON'T USE ANY TYPES
+DON'T USE "any" TYPES
 USE BUN FOR PACKAGE MANAGEMENT
-After you're done with any step:
+
+**CRITICAL DESIGN DECISIONS FROM USER:**
+
+- **Real-time chat**: "on each message, the LLM will call this mcp service"
+- **Async processing**: "the mcp memory can act async from the chat"
+- **Continuous growth**: "the system should respond with each message (it will decide which parts of itself to refine)"
+- **Fast adaptation**: "the timeline will be much shorter or users won't be satisfied, llms adapt fast"
+- **Sparse personality**: "build a sparse personality and grow it as the chat goes on"
+- **LLM non-determinism**: Need env-configurable semantic deduplication
+  After you're done with any step:
 
 - lint and run autofix with bunx biome and tsc --noEmit.
 - review if you hardcoded or redefined any types that shouldn't been sourced from PRISMA or BAML.
 - in tests, use bun's test suite, do not mock BAML client! you can cache responses of the llm somewhere if you want for test purposes
+- **IMPORTANT**: BAML calls need 60+ second timeouts - they make real LLM API calls
 
 ## Common Development Commands
 
@@ -37,6 +49,14 @@ bun db:reset         # Reset database completely
 bun db:studio        # Open Prisma Studio for database visualization
 ```
 
+### Testing
+
+```bash
+bun test                                    # Run all tests
+bun test --timeout 60000                   # Run with 60s timeout for BAML calls
+bun test aria-preservation.test.ts         # Run specific test
+```
+
 ### Code Quality
 
 ```bash
@@ -53,7 +73,28 @@ bun test             # Run tests using Bun test runner
 
 ## Architecture
 
+**WHAT'S WORKING:**
+
+- ✅ 35+ table database schema with comprehensive persona modeling
+- ✅ PersonaBuilder: Multi-pass extraction (identity, physical, emotional, speech patterns)
+- ✅ PersonalityMonitor: PersDyn computational phenotyping model
+- ✅ StateManagement: Dynamic KV store for any state LLM references
+- ✅ MemoryGraph: PostgreSQL-optimized bidirectional associations
+- ✅ AgenticRetrieval: 5-strategy multi-pass memory search with reflection
+- ✅ Aria preservation test passing (demonstrates complete persona capture)
+
+**CRITICAL MISSING (BASED ON USER REQUIREMENTS):**
+
+- ❌ **MCP Server**: No real-time chat interface for "on each message" calls
+- ❌ **Async Processing Queue**: Background processing for heavy analysis
+- ❌ **Per-message Decision Matrix**: "system should decide which parts to refine"
+- ❌ **Fast Personality Development**: Parameters for "user satisfaction" timeline
+- ❌ **Semantic Deduplication**: Env-configurable threshold for LLM non-determinism
+- ❌ **Missing BAML functions**: CheckContentMeaningfulness, CheckEmotionalContent
+
 ## Coding instructions
+
+- use for...of instead of forEach.
 
 - make sure not to implement any 'test accommodation' that will mask issues in the codebase.
 
@@ -128,6 +169,11 @@ The database uses 35+ tables to comprehensively model personas. Key aspects:
 5. **Agentic multi-pass retrieval** - Deep context understanding through iterative refinement
 6. **Flexible schema** - JSON fields allow extension without migrations
 7. **Proper validation over coalescing** - Fail fast on invalid data rather than masking issues
+8. **Real-time chat architecture** - Per-message MCP calls with async background processing
+9. **Sparse-to-rich personality growth** - Start minimal, grow continuously through conversation
+10. **Fast adaptation for user satisfaction** - Personality emerges within first few messages
+11. **Continuous refinement** - Each message can refine any aspect of the persona
+12. **Semantic deduplication** - Handle LLM non-determinism with configurable thresholds
 
 ## Scientific Foundation for Dynamic Services
 

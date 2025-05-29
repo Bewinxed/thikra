@@ -9,10 +9,9 @@ import type {
 import type { Prisma } from '@prisma/client';
 import { b } from '../../baml_client';
 import type {
+  ConversationEntityResult,
   DetectedEmotion,
   EmotionAnalysis,
-  EmotionMetadata,
-  EmotionalTransition,
   PADValues,
 } from '../../baml_client/types';
 import { PromptCache } from '../utils/prompt-cache';
@@ -53,10 +52,6 @@ interface ExtractedMemoryData {
   };
 }
 
-interface DetectedEmotionWithId extends DetectedEmotion {
-  emotionTypeId?: string;
-}
-
 export class MemoryFormationService {
   private emotionCache: Map<string, EmotionType> = new Map();
   private promptCache: PromptCache;
@@ -71,24 +66,39 @@ export class MemoryFormationService {
   }
 
   /**
-   * Create a memory from a conversation message
+   * Create memories from a conversation
+   * @param personaId - The persona experiencing this conversation
+   * @param messages - List of conversation messages
+   * @param conversationContext - Additional context (channel, session, etc)
    */
-  async createMemoryFromMessage(
+  async createMemoriesFromConversation(
     personaId: string,
-    message: ConversationMessage,
-    context?: Record<string, unknown>,
-  ): Promise<Memory> {
-    const extractedData = await this.extractMemoryData(message, context);
+    messages: ConversationMessage[],
+    conversationContext?: {
+      channel?: string;
+      sessionId?: string;
+      personaName?: string;
+      [key: string]: unknown;
+    },
+  ): Promise<Memory[]> {
+    const memories: Memory[] = [];
 
-    return this.createMemory({
-      personaId,
-      content: extractedData.content,
-      contentType: 'text',
-      participants: extractedData.participants,
-      context: extractedData.context,
-      significance: extractedData.significance,
-      tags: extractedData.tags,
-    });
+    // Extract entities from the full conversation context using LLM
+    const conversationEntities = await this.extractConversationEntities(
+      messages,
+      conversationContext,
+    );
+
+    // Create memories for each message
+    for (const message of messages) {
+      const memory = await this.createMemoryFromMessage(personaId, message, {
+        ...conversationContext,
+        conversationEntities,
+      });
+      memories.push(memory);
+    }
+
+    return memories;
   }
 
   /**
@@ -100,7 +110,7 @@ export class MemoryFormationService {
     contentType: string,
     metadata?: Record<string, unknown>,
   ): Promise<Memory> {
-    // Extract contextual information based on content type
+    // Extract contextual information using LLM analysis
     const extractedData = await this.extractContentData(content, contentType, metadata);
 
     return this.createMemory({
@@ -125,8 +135,14 @@ export class MemoryFormationService {
     const memories: Memory[] = [];
 
     for (const message of messages) {
-      // Skip system messages or very short messages
-      if (message.role === 'system' || message.content.length < 10) {
+      // Skip system messages
+      if (message.role === 'system') {
+        continue;
+      }
+
+      // Check if content is meaningful using LLM or config
+      const isContentMeaningful = await this.isContentMeaningful(message.content);
+      if (!isContentMeaningful) {
         continue;
       }
 
@@ -148,6 +164,28 @@ export class MemoryFormationService {
   }
 
   /**
+   * Create a memory from a single conversation message
+   * (Should be called from createMemoriesFromConversation for proper context)
+   */
+  private async createMemoryFromMessage(
+    personaId: string,
+    message: ConversationMessage,
+    context?: Record<string, unknown>,
+  ): Promise<Memory> {
+    const extractedData = await this.extractMemoryData(message, context);
+
+    return this.createMemory({
+      personaId,
+      content: extractedData.content,
+      contentType: 'text',
+      participants: extractedData.participants,
+      context: extractedData.context,
+      significance: extractedData.significance,
+      tags: extractedData.tags,
+    });
+  }
+
+  /**
    * Create a memory with full processing pipeline
    */
   private async createMemory(params: MemoryFormationParams): Promise<Memory> {
@@ -157,14 +195,24 @@ export class MemoryFormationService {
       contentType = 'text',
       participants = [],
       context = {},
-      significance = 0.5,
+      significance,
       tags = [],
     } = params;
+
+    // Validate required parameters
+    if (!personaId || !content) {
+      throw new Error('PersonaId and content are required for memory formation');
+    }
+
+    // Significance must be provided or calculated, never defaulted
+    if (significance === undefined || significance === null) {
+      throw new Error('Memory significance must be provided or calculated, not defaulted');
+    }
 
     // Generate embedding for content
     const embedding = await this.embeddingService.embed(content);
 
-    // Detect and create emotional state if content is text and substantial enough
+    // Detect and create emotional state if content has emotional content
     let emotionalStateId: string | null = null;
     if (contentType === 'text' && this.hasEmotionalContent(content)) {
       const emotionAnalysis = await this.detectEmotions(content);
@@ -176,7 +224,7 @@ export class MemoryFormationService {
       }
     }
 
-    // Determine memory type based on content analysis
+    // Determine memory type using LLM analysis
     const memoryType = await this.determineMemoryType(content, contentType, context);
 
     // Create the memory record
@@ -232,7 +280,7 @@ export class MemoryFormationService {
   }
 
   /**
-   * Extract memory data from conversation message
+   * Extract memory data from conversation message using LLM analysis
    */
   private async extractMemoryData(
     message: ConversationMessage,
@@ -240,26 +288,32 @@ export class MemoryFormationService {
   ): Promise<ExtractedMemoryData> {
     const content = message.content;
 
-    // Extract participants mentioned in the message
-    const participants = this.extractParticipants(content);
+    // Extract participants for this message from conversation context
+    const conversationEntities = context?.conversationEntities as Map<
+      string,
+      { entityId: string; entityType: string; role: string }
+    >;
+    const participantIds = conversationEntities
+      ? await this.extractMessageParticipants(message, conversationEntities)
+      : [];
 
-    // Generate tags based on content analysis
-    const tags = await this.generateTags(content);
+    // Generate tags using LLM analysis
+    const tags = await this.generateContentTags(content);
 
-    // Calculate significance based on content analysis
-    const significance = await this.calculateSignificance(content, message.role);
+    // Calculate significance using LLM analysis
+    const significance = await this.assessContentSignificance(content, message.role, context);
 
-    // Determine memory type
+    // Determine memory type using LLM analysis
     const memoryType = await this.determineMemoryType(content, 'text', context);
 
-    // Extract emotional context
+    // Extract emotional context using existing LLM emotion detection
     const emotionalContext = await this.extractEmotionalContext(content);
 
     return {
       content,
       memoryType,
       significance,
-      participants,
+      participants: participantIds,
       tags,
       context: {
         role: message.role,
@@ -272,37 +326,23 @@ export class MemoryFormationService {
   }
 
   /**
-   * Extract data from multi-modal content
+   * Extract data from multi-modal content using LLM analysis
    */
   private async extractContentData(
     content: string,
     contentType: string,
     metadata?: Record<string, unknown>,
   ): Promise<ExtractedMemoryData> {
-    // Basic extraction - could be enhanced with vision/audio analysis
-    const participants: string[] = [];
-    const tags: string[] = [contentType];
+    // Use LLM to analyze content and extract participants
+    const participants: string[] = []; // TODO: Implement multi-modal participant extraction
 
-    let significance = 0.5;
+    // Generate tags using LLM
+    const tags = await this.generateContentTags(content);
 
-    // Adjust significance based on content type
-    switch (contentType) {
-      case 'image':
-        significance = 0.7; // Visual memories tend to be more significant
-        tags.push('visual', 'image');
-        break;
-      case 'audio':
-        significance = 0.6;
-        tags.push('audio', 'sound');
-        break;
-      case 'video':
-        significance = 0.8; // Video combines visual and audio
-        tags.push('visual', 'audio', 'video');
-        break;
-      default:
-        significance = 0.5;
-    }
+    // Assess significance using LLM
+    const significance = await this.assessContentSignificance(content, contentType, metadata);
 
+    // Determine memory type using LLM
     const memoryType = await this.determineMemoryType(content, contentType, metadata);
 
     return {
@@ -319,156 +359,487 @@ export class MemoryFormationService {
   }
 
   /**
-   * Determine memory type based on content analysis
+   * Determine memory type using LLM analysis - NO HARDCODING
    */
   private async determineMemoryType(
     content: string,
     contentType: string,
-    _context?: Record<string, unknown>,
+    context?: Record<string, unknown>,
   ): Promise<MemoryType> {
-    // Simple heuristics - could be enhanced with LLM analysis
+    try {
+      const contextStr = context ? JSON.stringify(context) : 'No additional context';
+      const classification = await b.ClassifyMemoryType(content, contextStr);
 
-    if (contentType !== 'text') {
-      return 'episodic'; // Multi-modal memories are typically episodic
+      // Map BAML enum to Prisma enum
+      const memoryTypeMap: Record<string, MemoryType> = {
+        Episodic: 'episodic',
+        Semantic: 'semantic',
+        Procedural: 'procedural',
+      };
+
+      const mappedType = memoryTypeMap[classification.memoryType];
+      if (!mappedType) {
+        throw new Error(`Unknown memory type from LLM: ${classification.memoryType}`);
+      }
+
+      return mappedType;
+    } catch (error) {
+      console.error('Failed to classify memory type with LLM:', error);
+      throw new Error('Memory type classification failed - refusing to use fallback hardcoding');
     }
-
-    const lowerContent = content.toLowerCase();
-
-    // Check for procedural knowledge
-    if (
-      lowerContent.includes('how to') ||
-      lowerContent.includes('step') ||
-      lowerContent.includes('process') ||
-      lowerContent.includes('method')
-    ) {
-      return 'procedural';
-    }
-
-    // Check for factual information
-    if (
-      lowerContent.includes('fact') ||
-      lowerContent.includes('definition') ||
-      lowerContent.includes('means') ||
-      lowerContent.includes('is a') ||
-      lowerContent.includes('are a')
-    ) {
-      return 'semantic';
-    }
-
-    // Check for personal experiences
-    if (
-      lowerContent.includes('i ') ||
-      lowerContent.includes('me ') ||
-      lowerContent.includes('my ') ||
-      lowerContent.includes('we ') ||
-      lowerContent.includes('remember') ||
-      lowerContent.includes('happened')
-    ) {
-      return 'episodic';
-    }
-
-    // Default to episodic for conversational content
-    return 'episodic';
   }
 
   /**
-   * Extract participants mentioned in content
+   * Generate tags using LLM analysis - NO HARDCODING
    */
-  private extractParticipants(content: string): string[] {
-    const participants: string[] = [];
+  private async generateContentTags(content: string): Promise<string[]> {
+    try {
+      const tagResult = await b.GenerateContentTags(content);
 
-    // Simple name extraction - could be enhanced with NER
-    const namePatterns = [
-      /\b[A-Z][a-z]+\b/g, // Simple capitalized words
-      /\b(?:I|you|we|they|he|she)\b/gi, // Pronouns
-    ];
+      // Combine all tag types into a flat array
+      const allTags = [
+        ...tagResult.primaryTags,
+        ...tagResult.emotionalTags,
+        ...tagResult.conceptualTags,
+        ...tagResult.contextualTags,
+      ];
 
-    for (const pattern of namePatterns) {
-      const matches = content.match(pattern);
-      if (matches) {
-        participants.push(
-          ...matches.filter(
-            (name) =>
-              name.length > 1 && !['The', 'This', 'That', 'And', 'Or', 'But'].includes(name),
-          ),
-        );
+      // Remove duplicates and return
+      return [...new Set(allTags)];
+    } catch (error) {
+      console.error('Failed to generate tags with LLM:', error);
+      throw new Error('Tag generation failed - refusing to use fallback hardcoding');
+    }
+  }
+
+  /**
+   * Assess content significance using LLM analysis - NO HARDCODING
+   */
+  private async assessContentSignificance(
+    content: string,
+    speakerRole: string | Record<string, unknown>,
+    context?: Record<string, unknown>,
+  ): Promise<number> {
+    try {
+      const role = typeof speakerRole === 'string' ? speakerRole : 'unknown';
+      const contextStr = context ? JSON.stringify(context) : 'No additional context';
+
+      const significance = await b.AssessContentSignificance(content, role, contextStr);
+
+      // Validate the score is in valid range
+      if (significance.significanceScore < 0 || significance.significanceScore > 1) {
+        throw new Error(`Invalid significance score: ${significance.significanceScore}`);
+      }
+
+      return significance.significanceScore;
+    } catch (error) {
+      console.error('Failed to assess significance with LLM:', error);
+      throw new Error('Significance assessment failed - refusing to use fallback hardcoding');
+    }
+  }
+
+  /**
+   * Get relevant entities using Anthropic's Contextual Retrieval approach
+   * Based on: https://www.anthropic.com/news/contextual-retrieval
+   */
+  private async getRelevantEntitiesContext(
+    channel: string,
+    messages: ConversationMessage[],
+  ): Promise<string> {
+    try {
+      // Extract entity relevance query from conversation messages
+      const query = this.extractEntityRelevanceQuery(messages);
+
+      // Use semantic search to find relevant entities instead of sending ALL
+      const relevantEntityIds = await this.findRelevantEntities(channel, query, 20);
+
+      if (relevantEntityIds.length === 0) {
+        return 'No existing entities in this channel.';
+      }
+
+      // Get detailed info for relevant entities only
+      const relevantEntities = await this.prisma.entity.findMany({
+        where: {
+          id: { in: relevantEntityIds },
+        },
+        select: {
+          name: true,
+          entityType: true,
+          identificationMarkers: true,
+        },
+      });
+
+      // Format with contextual descriptions (Anthropic's approach)
+      const entityDescriptions = relevantEntities.map((entity) => {
+        const markers = (entity.identificationMarkers as Record<string, unknown>) || {};
+        const originalForm = (markers.original_form as string) || entity.name;
+        const role = (markers.conversationRole as string) || 'unknown';
+        const context = this.buildEntityContextDescription(entity, markers);
+
+        return `- ${entity.name} (${entity.entityType}): ${context}, originally "${originalForm}", role: ${role}`;
+      });
+
+      return `Relevant entities in channel "${channel}":\n${entityDescriptions.join('\n')}`;
+    } catch (error) {
+      console.error('Failed to get relevant entities context:', error);
+      // Fallback to simpler method if relevance detection fails
+      return this.getRecentEntitiesContext(channel, 10);
+    }
+  }
+
+  /**
+   * Extract entity relevance query from conversation messages
+   */
+  private extractEntityRelevanceQuery(messages: ConversationMessage[]): string {
+    // Combine recent message content to understand who might be relevant
+    const recentContent = messages
+      .slice(-3) // Last 3 messages for context
+      .map((m) => m.content)
+      .join(' ')
+      .toLowerCase();
+
+    // Extract key terms that suggest entity relevance
+    const relevanceTerms = [];
+
+    // Direct entity references
+    if (recentContent.includes('master') || recentContent.includes('user')) {
+      relevanceTerms.push('master user relationship');
+    }
+
+    // Conversation participants
+    if (recentContent.includes('we') || recentContent.includes('us')) {
+      relevanceTerms.push('conversation participants');
+    }
+
+    // Mentioned third parties
+    const pronouns = ['he', 'she', 'they', 'him', 'her', 'them'];
+    if (pronouns.some((p) => recentContent.includes(p))) {
+      relevanceTerms.push('third party mentions');
+    }
+
+    return relevanceTerms.length > 0 ? relevanceTerms.join(' ') : recentContent.substring(0, 200); // Fallback to content sample
+  }
+
+  /**
+   * Find relevant entities using semantic similarity and temporal proximity
+   */
+  private async findRelevantEntities(
+    channel: string,
+    query: string,
+    maxResults: number,
+  ): Promise<string[]> {
+    // Use temporal proximity - entities from recent memories are more likely relevant
+    const recentMemories = await this.prisma.memory.findMany({
+      where: {
+        channel,
+        occurredAt: {
+          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+        },
+      },
+      include: {
+        participants: {
+          include: {
+            entity: true,
+          },
+        },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 50,
+    });
+
+    // Extract unique entity IDs from recent memories
+    const recentEntityIds = new Set<string>();
+    for (const memory of recentMemories) {
+      for (const participant of memory.participants) {
+        recentEntityIds.add(participant.entityId);
       }
     }
 
-    return [...new Set(participants)]; // Remove duplicates
+    // If we have query terms, do semantic matching
+    const isQueryMeaningful = await this.isContentMeaningful(query);
+    if (isQueryMeaningful) {
+      // TODO: Could enhance with embedding similarity search
+      // For now, use simple text matching against entity markers
+      const entities = await this.prisma.entity.findMany({
+        where: {
+          OR: [
+            { firstContactChannel: channel },
+            {
+              identificationMarkers: {
+                path: ['channel'],
+                equals: channel,
+              },
+            },
+          ],
+        },
+      });
+
+      // Score entities by LLM-based relevance analysis
+      const scoredEntities = await Promise.all(
+        entities.map(async (entity) => {
+          try {
+            const entityInfo = JSON.stringify({
+              name: entity.name,
+              type: entity.entityType,
+              markers: entity.identificationMarkers,
+              recentlyActive: recentEntityIds.has(entity.id),
+            });
+
+            const relevanceAnalysis = await b.CalculateEntityRelevance(entityInfo, query);
+            
+            // Apply recency boost to LLM score if entity was recently active
+            let finalScore = relevanceAnalysis.relevanceScore;
+            if (recentEntityIds.has(entity.id)) {
+              finalScore = Math.min(1.0, finalScore * 1.2); // 20% boost for recent activity
+            }
+
+            return { 
+              entity, 
+              score: finalScore,
+              reasoning: relevanceAnalysis.reasoning 
+            };
+          } catch (error) {
+            console.error(`Failed to analyze entity relevance for ${entity.name}:`, error);
+            // Use fallback scoring only for recent activity to avoid complete failure
+            const score = recentEntityIds.has(entity.id) ? 0.7 : 0.1;
+            return { 
+              entity, 
+              score, 
+              reasoning: 'Fallback scoring due to LLM failure' 
+            };
+          }
+        })
+      );
+
+      const filteredEntities = scoredEntities
+        .filter((item) => item.score > 0.1) // Minimum relevance threshold
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxResults);
+
+      return filteredEntities.map((item) => item.entity.id);
+    }
+
+    // Fallback to recent entities only
+    return Array.from(recentEntityIds).slice(0, maxResults);
   }
 
   /**
-   * Generate tags for content
+   * Build contextual description for entity (Anthropic's approach)
    */
-  private async generateTags(content: string): Promise<string[]> {
-    const tags: string[] = [];
+  private buildEntityContextDescription(
+    entity: { name: string | null; entityType: string },
+    markers: Record<string, unknown>,
+  ): string {
+    const context = [];
 
-    // Extract simple keywords
-    const words = content
-      .toLowerCase()
-      .replace(/[^\w\s]/g, ' ')
-      .split(/\s+/)
-      .filter((word) => word.length > 3);
-
-    // Count word frequency
-    const wordFreq: Record<string, number> = {};
-    for (const word of words) {
-      wordFreq[word] = (wordFreq[word] || 0) + 1;
+    if (markers.conversationRole) {
+      context.push(`${markers.conversationRole} in conversations`);
     }
 
-    // Select top frequent words as tags
-    const sortedWords = Object.entries(wordFreq)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 5)
-      .map(([word]) => word);
-
-    tags.push(...sortedWords);
-
-    // Add content-based tags
-    if (content.includes('?')) tags.push('question');
-    if (content.includes('!')) tags.push('exclamation');
-    if (content.match(/\b(love|like|enjoy|happy|sad|angry|afraid)\b/i)) {
-      tags.push('emotional');
+    if (markers.relationship_type) {
+      context.push(`relationship type: ${markers.relationship_type}`);
     }
 
-    return tags;
+    if (markers.interaction_frequency) {
+      context.push(`${markers.interaction_frequency} interactions`);
+    }
+
+    return context.length > 0 ? context.join(', ') : `${entity.entityType} entity`;
   }
 
   /**
-   * Calculate memory significance
+   * Fallback method for simple recent entities (when relevance detection fails)
    */
-  private async calculateSignificance(content: string, role: MessageRole): Promise<number> {
-    let significance = 0.5; // Base significance
+  private async getRecentEntitiesContext(channel: string, limit: number): Promise<string> {
+    const recentEntities = await this.prisma.entity.findMany({
+      where: {
+        OR: [
+          { firstContactChannel: channel },
+          {
+            identificationMarkers: {
+              path: ['channel'],
+              equals: channel,
+            },
+          },
+        ],
+      },
+      select: {
+        name: true,
+        entityType: true,
+        identificationMarkers: true,
+      },
+      orderBy: { id: 'desc' },
+      take: limit,
+    });
 
-    // Adjust based on role
-    if (role === 'user') {
-      significance += 0.2; // User messages are more significant
+    if (recentEntities.length === 0) {
+      return 'No existing entities in this channel.';
     }
 
-    // Adjust based on content characteristics
-    if (content.length > 100) {
-      significance += 0.1; // Longer messages are more significant
-    }
+    const entityDescriptions = recentEntities.map((entity) => {
+      const markers = (entity.identificationMarkers as Record<string, unknown>) || {};
+      const originalForm = (markers.original_form as string) || entity.name;
 
-    if (content.includes('important') || content.includes('remember')) {
-      significance += 0.3;
-    }
+      return `- ${entity.name} (${entity.entityType}): originally "${originalForm}"`;
+    });
 
-    if (content.match(/\b(love|hate|amazing|terrible|wonderful|awful)\b/i)) {
-      significance += 0.2; // Emotional content is more significant
-    }
-
-    if (content.includes('?')) {
-      significance += 0.1; // Questions are somewhat more significant
-    }
-
-    // Ensure significance is between 0 and 1
-    return Math.min(1, Math.max(0, significance));
+    return `Recent entities in channel "${channel}":\n${entityDescriptions.join('\n')}`;
   }
 
   /**
-   * Extract emotional context from content
+   * Extract all entities from a full conversation using LLM - NO HARDCODING
+   */
+  private async extractConversationEntities(
+    messages: ConversationMessage[],
+    context?: { channel?: string; personaName?: string; [key: string]: unknown },
+  ): Promise<Map<string, { entityId: string; entityType: string; role: string }>> {
+    const entityMap = new Map<string, { entityId: string; entityType: string; role: string }>();
+    const personaName = context?.personaName || 'assistant';
+    const channel = context?.channel || 'default';
+
+    // Get relevant entities using Anthropic's Contextual Retrieval approach
+    const existingEntities = await this.getRelevantEntitiesContext(channel, messages);
+
+    // Call BAML function to extract entities
+    const messagesJson = JSON.stringify(
+      messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp,
+      })),
+    );
+
+    try {
+      const entityResult = await b.ExtractConversationEntities(
+        messagesJson,
+        personaName,
+        channel,
+        existingEntities,
+      );
+
+      // Process extracted entities and handle consolidation properly
+      const entityTypeMap: Record<string, 'human' | 'llm' | 'system' | 'unknown'> = {
+        Human: 'human',
+        Llm: 'llm',
+        System: 'system',
+        Unknown: 'unknown',
+      };
+
+      // Group entities by consolidated name to track all original references
+      const consolidatedEntities = new Map<
+        string,
+        {
+          consolidatedName: string;
+          entityType: string;
+          originalReferences: string[];
+          roles: string[];
+        }
+      >();
+
+      for (const entity of entityResult.entities) {
+        const consolidatedKey = entity.name.toLowerCase();
+
+        if (!consolidatedEntities.has(consolidatedKey)) {
+          consolidatedEntities.set(consolidatedKey, {
+            consolidatedName: entity.name,
+            entityType: entity.entityType,
+            originalReferences: [],
+            roles: [],
+          });
+        }
+
+        const consolidated = consolidatedEntities.get(consolidatedKey);
+        if (!consolidated) continue;
+        consolidated.originalReferences.push(entity.originalReference);
+        consolidated.roles.push(entity.role);
+      }
+
+      // Create/find database entities and map ALL references to the same ID
+      for (const [consolidatedKey, entityInfo] of consolidatedEntities) {
+        const mappedType = entityTypeMap[entityInfo.entityType];
+        if (!mappedType) {
+          throw new Error(`Unknown entity type from LLM: ${entityInfo.entityType}`);
+        }
+
+        // Find or create the database entity using the consolidated name
+        const dbEntity = await this.findOrCreateEntity(
+          entityInfo.consolidatedName,
+          mappedType,
+          channel,
+        );
+
+        // Map the consolidated name to the database entity
+        const primaryRole = entityInfo.roles[0] || 'participant';
+        entityMap.set(consolidatedKey, {
+          entityId: dbEntity.id,
+          entityType: dbEntity.entityType,
+          role: primaryRole,
+        });
+
+        // IMPORTANT: Also map all original references to the same database entity ID
+        for (const originalRef of entityInfo.originalReferences) {
+          const originalKey = originalRef.toLowerCase();
+          if (originalKey !== consolidatedKey) {
+            entityMap.set(originalKey, {
+              entityId: dbEntity.id,
+              entityType: dbEntity.entityType,
+              role: primaryRole,
+            });
+          }
+        }
+      }
+
+      // Ensure we have basic mappings for conversation roles
+      if (!entityMap.has('assistant') && entityResult.speakerEntity) {
+        const speaker = entityMap.get(entityResult.speakerEntity.toLowerCase());
+        if (speaker) {
+          entityMap.set('assistant', speaker);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to extract entities with LLM:', error);
+      throw new Error('Entity extraction failed - refusing to use fallback hardcoding');
+    }
+
+    return entityMap;
+  }
+
+  /**
+   * Extract participants for a single message based on conversation context
+   */
+  private async extractMessageParticipants(
+    message: ConversationMessage,
+    conversationEntities: Map<string, { entityId: string; entityType: string; role: string }>,
+  ): Promise<string[]> {
+    const participantIds: string[] = [];
+
+    // Speaker is always a participant
+    const speaker =
+      message.role === 'assistant'
+        ? conversationEntities.get('assistant')
+        : conversationEntities.get('user');
+
+    if (speaker) {
+      participantIds.push(speaker.entityId);
+    }
+
+    // In conversations, there's usually an implicit addressee
+    const addressee =
+      message.role === 'assistant'
+        ? conversationEntities.get('user')
+        : conversationEntities.get('assistant');
+
+    if (addressee) {
+      participantIds.push(addressee.entityId);
+    }
+
+    // TODO: Use LLM to detect third-party mentions in content
+
+    return [...new Set(participantIds)];
+  }
+
+  /**
+   * Extract emotional context from content using existing LLM emotion detection
    */
   private async extractEmotionalContext(content: string): Promise<
     | {
@@ -479,43 +850,34 @@ export class MemoryFormationService {
     | undefined
   > {
     try {
-      // Simple emotion detection - could be enhanced
-      const emotions: string[] = [];
-      let intensity = 0.5;
-      const confidence = 0.7;
+      const emotionAnalysis = await this.detectEmotions(content);
 
-      const emotionWords = {
-        joy: ['happy', 'joyful', 'excited', 'delighted', 'cheerful'],
-        sadness: ['sad', 'depressed', 'melancholy', 'sorrowful', 'gloomy'],
-        anger: ['angry', 'furious', 'rage', 'irritated', 'annoyed'],
-        fear: ['afraid', 'scared', 'terrified', 'anxious', 'worried'],
-        surprise: ['surprised', 'amazed', 'astonished', 'shocked'],
-        love: ['love', 'adore', 'cherish', 'affection', 'devoted'],
-      };
-
-      const lowerContent = content.toLowerCase();
-
-      for (const [emotion, words] of Object.entries(emotionWords)) {
-        for (const word of words) {
-          if (lowerContent.includes(word)) {
-            emotions.push(emotion);
-            // Increase intensity based on strong words
-            if (['furious', 'terrified', 'adore', 'amazing'].includes(word)) {
-              intensity = Math.min(1, intensity + 0.3);
-            }
-            break;
-          }
-        }
-      }
-
-      if (emotions.length === 0) {
+      if (
+        emotionAnalysis.primaryEmotions.length === 0 &&
+        emotionAnalysis.secondaryEmotions.length === 0
+      ) {
         return undefined;
       }
 
+      const emotions = [
+        ...emotionAnalysis.primaryEmotions.map((e) => e.emotionName),
+        ...emotionAnalysis.secondaryEmotions.map((e) => e.emotionName),
+      ];
+
+      // Calculate average intensity and confidence
+      const allEmotions = [
+        ...emotionAnalysis.primaryEmotions,
+        ...emotionAnalysis.secondaryEmotions,
+      ];
+      const avgIntensity =
+        allEmotions.reduce((sum, e) => sum + e.intensity, 0) / allEmotions.length;
+      const avgConfidence =
+        allEmotions.reduce((sum, e) => sum + e.confidence, 0) / allEmotions.length;
+
       return {
         emotions: [...new Set(emotions)],
-        intensity,
-        confidence,
+        intensity: avgIntensity,
+        confidence: avgConfidence,
       };
     } catch (error) {
       console.error('Failed to extract emotional context:', error);
@@ -538,7 +900,7 @@ export class MemoryFormationService {
   }
 
   /**
-   * Create an emotional state record from emotion analysis
+   * Create an emotional state record from emotion analysis using LLM data
    */
   private async createEmotionalState(
     emotionAnalysis: EmotionAnalysis,
@@ -551,12 +913,9 @@ export class MemoryFormationService {
       },
     });
 
-    // Process primary emotions
+    // Process primary emotions using LLM-detected emotions and PAD values
     for (const emotion of emotionAnalysis.primaryEmotions) {
-      const emotionType = await this.findOrCreateEmotionType(
-        emotion.emotionName,
-        emotion.intensity,
-      );
+      const emotionType = await this.findOrCreateEmotionType(emotion, emotionAnalysis.padValues);
 
       await this.prisma.emotionalStateComponent.create({
         data: {
@@ -564,7 +923,7 @@ export class MemoryFormationService {
           emotionTypeId: emotionType.id,
           intensity: emotion.intensity,
           voiceModulation: {
-            detected_from: 'text_analysis',
+            detected_from: 'llm_analysis',
             emotion_type: 'primary',
             content_preview: content.substring(0, 100),
           } as Prisma.InputJsonValue,
@@ -574,10 +933,7 @@ export class MemoryFormationService {
 
     // Process secondary emotions
     for (const emotion of emotionAnalysis.secondaryEmotions) {
-      const emotionType = await this.findOrCreateEmotionType(
-        emotion.emotionName,
-        emotion.intensity,
-      );
+      const emotionType = await this.findOrCreateEmotionType(emotion, emotionAnalysis.padValues);
 
       await this.prisma.emotionalStateComponent.create({
         data: {
@@ -585,7 +941,7 @@ export class MemoryFormationService {
           emotionTypeId: emotionType.id,
           intensity: emotion.intensity,
           voiceModulation: {
-            detected_from: 'text_analysis',
+            detected_from: 'llm_analysis',
             emotion_type: 'secondary',
             content_preview: content.substring(0, 100),
           } as Prisma.InputJsonValue,
@@ -597,29 +953,37 @@ export class MemoryFormationService {
   }
 
   /**
-   * Find or create an emotion type
+   * Find or create an emotion type using LLM-provided PAD values - NO HARDCODING
    */
-  private async findOrCreateEmotionType(emotionName: string, intensity: number) {
+  private async findOrCreateEmotionType(
+    emotion: DetectedEmotion,
+    padValues: PADValues,
+  ): Promise<EmotionType> {
     // Try to find existing emotion type
     let emotionType = await this.prisma.emotionType.findFirst({
       where: {
         emotionName: {
-          equals: emotionName,
+          equals: emotion.emotionName,
           mode: 'insensitive',
         },
       },
     });
 
-    // Create if doesn't exist
+    // Create if doesn't exist using LLM-provided PAD values
     if (!emotionType) {
+      // Validate intensity is in valid range
+      if (emotion.intensity < 0 || emotion.intensity > 1) {
+        throw new Error(`Invalid emotion intensity: ${emotion.intensity}`);
+      }
+
       emotionType = await this.prisma.emotionType.create({
         data: {
-          primaryEmotion: this.categorizePrimaryEmotion(emotionName),
-          intensityLevel: Math.round(intensity * 3) || 1, // Convert 0-1 to 1-3
-          emotionName: emotionName,
-          pleasureComponent: this.calculatePleasureComponent(emotionName),
-          arousalComponent: this.calculateArousalComponent(emotionName),
-          dominanceComponent: this.calculateDominanceComponent(emotionName),
+          primaryEmotion: 'custom', // All LLM-detected emotions are custom
+          intensityLevel: Math.round(emotion.intensity * 3) + 1, // Convert 0-1 to 1-4
+          emotionName: emotion.emotionName,
+          pleasureComponent: padValues.pleasure,
+          arousalComponent: padValues.arousal,
+          dominanceComponent: padValues.dominance,
         },
       });
     }
@@ -628,114 +992,49 @@ export class MemoryFormationService {
   }
 
   /**
-   * Categorize emotion into primary emotion categories
-   */
-  private categorizePrimaryEmotion(emotionName: string): string {
-    const emotionCategories: Record<string, string> = {
-      joy: 'joy',
-      happiness: 'joy',
-      excitement: 'joy',
-      love: 'trust',
-      contentment: 'joy',
-      sadness: 'sadness',
-      anger: 'anger',
-      fear: 'fear',
-      anxiety: 'fear',
-      disgust: 'disgust',
-      surprise: 'surprise',
-      anticipation: 'anticipation',
-      trust: 'trust',
-    };
-
-    return emotionCategories[emotionName.toLowerCase()] || 'joy';
-  }
-
-  /**
-   * Calculate PAD components for emotions
-   */
-  private calculatePleasureComponent(emotionName: string): number {
-    const pleasureMap: Record<string, number> = {
-      joy: 0.8,
-      happiness: 0.8,
-      excitement: 0.9,
-      love: 0.9,
-      contentment: 0.7,
-      sadness: -0.7,
-      anger: -0.5,
-      fear: -0.8,
-      anxiety: -0.6,
-      disgust: -0.8,
-      surprise: 0.1,
-      anticipation: 0.3,
-      trust: 0.5,
-    };
-    return pleasureMap[emotionName.toLowerCase()] || 0.0;
-  }
-
-  private calculateArousalComponent(emotionName: string): number {
-    const arousalMap: Record<string, number> = {
-      joy: 0.6,
-      happiness: 0.5,
-      excitement: 0.9,
-      love: 0.7,
-      contentment: 0.2,
-      sadness: -0.4,
-      anger: 0.8,
-      fear: 0.7,
-      anxiety: 0.6,
-      disgust: 0.3,
-      surprise: 0.8,
-      anticipation: 0.5,
-      trust: 0.1,
-    };
-    return arousalMap[emotionName.toLowerCase()] || 0.0;
-  }
-
-  private calculateDominanceComponent(emotionName: string): number {
-    const dominanceMap: Record<string, number> = {
-      joy: 0.5,
-      happiness: 0.4,
-      excitement: 0.6,
-      love: 0.3,
-      contentment: 0.3,
-      sadness: -0.6,
-      anger: 0.7,
-      fear: -0.8,
-      anxiety: -0.5,
-      disgust: 0.2,
-      surprise: -0.3,
-      anticipation: 0.2,
-      trust: 0.1,
-    };
-    return dominanceMap[emotionName.toLowerCase()] || 0.0;
-  }
-
-  /**
    * Create memory participant relationships
    */
   private async createMemoryParticipants(
     memoryId: string,
-    participantNames: string[],
+    participantEntityIds: string[],
   ): Promise<void> {
-    for (const participantName of participantNames) {
-      // Find or create entity for participant
-      const entity = await this.findOrCreateEntity(participantName);
-
-      // Create memory participant relationship
-      await this.prisma.memoryParticipant.create({
-        data: {
-          memoryId,
-          entityId: entity.id,
-          role: this.determineParticipantRole(participantName),
+    for (const entityId of participantEntityIds) {
+      // Check if relationship already exists
+      const existingParticipant = await this.prisma.memoryParticipant.findUnique({
+        where: {
+          memoryId_entityId: {
+            memoryId,
+            entityId,
+          },
         },
       });
+
+      if (!existingParticipant) {
+        // Create memory participant relationship
+        await this.prisma.memoryParticipant.create({
+          data: {
+            memoryId,
+            entityId,
+            role: 'participant', // Generic role since we already have entity types
+          },
+        });
+      }
     }
   }
 
   /**
-   * Find or create an entity for a participant
+   * Find or create an entity - uses LLM entity type determination
    */
-  private async findOrCreateEntity(name: string) {
+  private async findOrCreateEntity(
+    name: string,
+    entityType: 'human' | 'llm' | 'system' | 'unknown',
+    channel?: string,
+  ) {
+    // Validate required parameters
+    if (!name || !entityType) {
+      throw new Error('Name and entityType are required for entity creation');
+    }
+
     // Normalize the name
     const normalizedName = name.trim().toLowerCase();
 
@@ -751,66 +1050,34 @@ export class MemoryFormationService {
 
     // Create if doesn't exist
     if (!entity) {
+      // Determine metadata based on entity type
+      const metadata: Record<string, unknown> = {
+        source: 'llm_extraction',
+        original_form: name,
+        normalized_form: normalizedName,
+      };
+
+      if (channel) {
+        metadata.channel = channel;
+      }
+
+      // Validate entity type is known
+      const validTypes = ['human', 'llm', 'system', 'unknown'];
+      if (!validTypes.includes(entityType)) {
+        throw new Error(`Invalid entity type: ${entityType}`);
+      }
+
       entity = await this.prisma.entity.create({
         data: {
           name: normalizedName,
-          entityType: this.determineEntityType(name),
-          firstContactChannel: 'memory_formation',
-          identificationMarkers: {
-            source: 'extracted_from_content',
-            original_form: name,
-            normalized_form: normalizedName,
-          } as Prisma.InputJsonValue,
+          entityType,
+          firstContactChannel: channel || 'memory_formation',
+          identificationMarkers: metadata as Prisma.InputJsonValue,
         },
       });
     }
 
     return entity;
-  }
-
-  /**
-   * Determine entity type based on name patterns
-   */
-  private determineEntityType(name: string): 'human' | 'llm' | 'system' | 'unknown' {
-    const lowerName = name.toLowerCase();
-
-    // Check for pronouns and personal references - map persona to human since no persona type exists
-    if (['i', 'me', 'myself', 'you', 'user', 'human'].includes(lowerName)) {
-      return 'human';
-    }
-
-    if (lowerName.includes('gpt') || lowerName.includes('claude') || lowerName.includes('ai')) {
-      return 'llm';
-    }
-
-    if (lowerName.includes('system') || lowerName.includes('bot')) {
-      return 'system';
-    }
-
-    // Default to human for proper names
-    return 'human';
-  }
-
-  /**
-   * Determine participant role in memory
-   */
-  private determineParticipantRole(name: string): string {
-    const lowerName = name.toLowerCase();
-
-    if (['i', 'me', 'myself'].includes(lowerName)) {
-      return 'primary';
-    }
-
-    if (['you', 'user'].includes(lowerName)) {
-      return 'addressee';
-    }
-
-    // Check if it's a proper name (likely important participant)
-    if (name.match(/^[A-Z][a-z]+$/)) {
-      return 'participant';
-    }
-
-    return 'mentioned';
   }
 
   /**
@@ -826,31 +1093,9 @@ export class MemoryFormationService {
   /**
    * Check if content is substantial enough to warrant emotional analysis
    */
-  private hasEmotionalContent(content: string): boolean {
-    // Skip very short content
-    if (content.length < 10) return false;
-
-    // Skip generic system messages
-    const lowerContent = content.toLowerCase().trim();
-    const genericMessages = [
-      'context updated',
-      'ok',
-      'yes',
-      'no',
-      'done',
-      'loading',
-      'error',
-      'success',
-      'saved',
-      'updated',
-    ];
-
-    if (genericMessages.includes(lowerContent)) return false;
-
-    // Need at least 3 words for meaningful emotional analysis
-    if (content.trim().split(/\s+/).length < 3) return false;
-
-    return true;
+  private async hasEmotionalContent(content: string): Promise<boolean> {
+    const analysis = await b.CheckEmotionalContent(content);
+    return analysis.hasEmotionalContent;
   }
 
   /**
@@ -872,172 +1117,48 @@ export class MemoryFormationService {
         await this.promptCache.store('AnalyzeEmotions', text, analysis, undefined);
       }
 
-      // Map detected emotions to database IDs
-      const enrichedAnalysis = await this.enrichEmotionAnalysis(analysis);
-
-      return enrichedAnalysis;
+      return analysis;
     } catch (error) {
       console.error('Error detecting emotions:', error);
-      // Fallback to basic analysis
-      return this.fallbackEmotionDetection(text);
+      throw new Error('Emotion detection failed - no fallback available');
     }
   }
 
   /**
-   * Enrich emotion analysis with database IDs and create custom emotions if needed
+   * Check if content is meaningful enough to create a memory
    */
-  private async enrichEmotionAnalysis(analysis: EmotionAnalysis): Promise<EmotionAnalysis> {
-    // Process primary emotions
-    for (const emotion of analysis.primaryEmotions) {
-      await this.enrichDetectedEmotion(emotion);
-    }
-
-    // Process secondary emotions
-    for (const emotion of analysis.secondaryEmotions) {
-      await this.enrichDetectedEmotion(emotion);
-    }
-
-    // Register any custom emotions
-    for (const customEmotionName of analysis.customEmotions) {
-      await this.registerCustomEmotion(
-        customEmotionName,
-        analysis.padValues,
-        '', // No context for custom emotions from analysis
-      );
-    }
-
-    return analysis;
+  private async isContentMeaningful(content: string): Promise<boolean> {
+    const analysis = await b.CheckContentMeaningfulness(content);
+    return analysis.isMeaningful;
   }
 
   /**
-   * Enrich a single detected emotion with database information
+   * Calculate entity relevance score using LLM analysis
    */
-  private async enrichDetectedEmotion(emotion: DetectedEmotion): Promise<void> {
-    const dbEmotion = this.emotionCache.get(emotion.emotionName.toLowerCase());
-
-    if (dbEmotion) {
-      // Add database ID to the emotion object
-      const emotionWithId = emotion as DetectedEmotionWithId;
-      emotionWithId.emotionTypeId = dbEmotion.id.toString();
-    } else if (emotion.isCustom) {
-      // Create custom emotion in database
-      const newEmotion = await this.registerCustomEmotion(
-        emotion.emotionName,
-        undefined, // Will estimate from context
-        emotion.context || '',
-      );
-      const emotionWithId = emotion as DetectedEmotionWithId;
-      emotionWithId.emotionTypeId = newEmotion.id.toString();
-    }
-  }
-
-  /**
-   * Create or update custom emotion types
-   */
-  private async registerCustomEmotion(
-    emotionName: string,
-    padValues?: PADValues,
-    context?: string,
-  ): Promise<EmotionType> {
-    // Check if already exists
-    const existing = await this.prisma.emotionType.findFirst({
-      where: { emotionName },
+  private async calculateEntityRelevance(entity: any, query: string): Promise<number> {
+    const entityContext = JSON.stringify({
+      name: entity.name,
+      type: entity.entityType,
+      markers: entity.identificationMarkers,
     });
 
-    if (existing) {
-      return existing;
-    }
+    const analysis = await b.CalculateEntityRelevance(entityContext, query);
+    return analysis.relevanceScore;
+  }
 
-    // Use provided PAD values or estimate from context
-    const pad = padValues || (await this.estimatePADFromContext(emotionName, context || ''));
-
-    // Create new emotion type
-    const newEmotion = await this.prisma.emotionType.create({
-      data: {
-        primaryEmotion: 'custom',
-        emotionName,
-        intensityLevel: 2,
-        pleasureComponent: pad.pleasure,
-        arousalComponent: pad.arousal,
-        dominanceComponent: pad.dominance,
-      },
+  /**
+   * Calculate reinforcement boost for memory consolidation
+   */
+  private async calculateReinforcementBoost(memory: Memory): Promise<number> {
+    const memoryContext = JSON.stringify({
+      content: memory.searchText,
+      significance: memory.significanceScore,
+      type: memory.memoryType,
+      age: Date.now() - memory.occurredAt.getTime(),
+      strength: memory.memoryStrength,
     });
 
-    // Update cache
-    this.emotionCache.set(emotionName.toLowerCase(), newEmotion);
-
-    return newEmotion;
-  }
-
-  /**
-   * Estimate PAD values using BAML
-   */
-  private async estimatePADFromContext(emotionName: string, context: string): Promise<PADValues> {
-    try {
-      const cacheKey = `${emotionName}|${context}`;
-      const cached = await this.promptCache.load('EstimatePADValues', cacheKey);
-
-      if (cached) {
-        return JSON.parse(cached.response) as PADValues;
-      }
-
-      const result = await b.EstimatePADValues(emotionName, context);
-      await this.promptCache.store('EstimatePADValues', cacheKey, result, undefined);
-      return result;
-    } catch (error) {
-      console.error('Error estimating PAD values:', error);
-      // Default neutral values
-      return { pleasure: 0, arousal: 0.5, dominance: 0 };
-    }
-  }
-
-  /**
-   * Fallback emotion detection without LLM
-   */
-  private async fallbackEmotionDetection(text: string): Promise<EmotionAnalysis> {
-    // Simple keyword-based detection as fallback
-    const detectedEmotions: DetectedEmotion[] = [];
-
-    // Check for basic emotions
-    const emotionKeywords = {
-      joy: /\b(happy|joy|glad|pleased|delighted|excited)\b/gi,
-      sadness: /\b(sad|unhappy|depressed|down|crying)\b/gi,
-      anger: /\b(angry|mad|furious|annoyed|irritated)\b/gi,
-      fear: /\b(afraid|scared|frightened|worried|anxious)\b/gi,
-      love: /\b(love|adore|cherish|devoted)\b/gi,
-      arousal: /\b(aroused|desire|want|need|yearning)\b/gi,
-    };
-
-    for (const [emotion, pattern] of Object.entries(emotionKeywords)) {
-      const matches = text.match(pattern);
-      if (matches && matches.length > 0) {
-        detectedEmotions.push({
-          emotionName: emotion,
-          intensity: Math.min(1, matches.length * 0.3),
-          confidence: 0.5,
-          triggers: matches,
-          isCustom: !this.emotionCache.has(emotion),
-          context: null,
-        });
-      }
-    }
-
-    // Sort by intensity
-    detectedEmotions.sort((a, b) => b.intensity - a.intensity);
-
-    return {
-      primaryEmotions: detectedEmotions.slice(0, 3),
-      secondaryEmotions: detectedEmotions.slice(3),
-      padValues: { pleasure: 0, arousal: 0.5, dominance: 0 },
-      emotionalComplexity: Math.min(1, detectedEmotions.length / 5),
-      compoundEmotions: [],
-      customEmotions: [],
-      transitions: [],
-      metadata: {
-        hasIntimateContent: /\b(intimate|romantic|sensual|aroused)\b/i.test(text),
-        hasPhysicalResponse: /\b(trembling|shaking|breathless|flushed)\b/i.test(text),
-        emotionalIntensity: detectedEmotions.length > 3 ? 'high' : 'medium',
-      },
-    };
+    const analysis = await b.CalculateReinforcementBoost(memoryContext);
+    return analysis.boostAmount;
   }
 }

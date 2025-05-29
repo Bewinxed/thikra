@@ -7,6 +7,7 @@ import type {
   PrismaClient,
 } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { b } from '../../baml_client';
 import type { EmbeddingService } from './embedding.service';
 import type { LLMService } from './llm.service';
 import type { MemoryGraphService } from './memory-graph.service';
@@ -394,11 +395,13 @@ export class AgenticMemoryRetrieval {
       },
     });
 
-    const retrievalResults: RetrievalResult[] = memories.map((memory) => ({
-      memory,
-      relevanceScore: this.calculateAssociationRelevance(memory, query.query),
-      retrievalReason: 'memory_association',
-    }));
+    const retrievalResults: RetrievalResult[] = await Promise.all(
+      memories.map(async (memory) => ({
+        memory,
+        relevanceScore: await this.calculateAssociationRelevance(memory, query.query),
+        retrievalReason: 'memory_association',
+      }))
+    );
 
     // Add to context
     for (const result of retrievalResults) {
@@ -483,11 +486,13 @@ export class AgenticMemoryRetrieval {
       },
     });
 
-    const retrievalResults: RetrievalResult[] = memories.map((memory) => ({
-      memory,
-      relevanceScore: this.calculateCrossModalRelevance(memory, query.query),
-      retrievalReason: 'cross_modal_association',
-    }));
+    const retrievalResults: RetrievalResult[] = await Promise.all(
+      memories.map(async (memory) => ({
+        memory,
+        relevanceScore: await this.calculateCrossModalRelevance(memory, query.query),
+        retrievalReason: 'cross_modal_association',
+      }))
+    );
 
     // Add to context
     for (const result of retrievalResults) {
@@ -699,24 +704,26 @@ export class AgenticMemoryRetrieval {
     return Math.min(1, relevance);
   }
 
-  private calculateAssociationRelevance(memory: Memory, originalQuery: string): number {
-    // Simple text similarity for association relevance
-    const memoryText = (memory.searchText || '').toLowerCase();
-    const queryText = originalQuery.toLowerCase();
-
-    const commonWords = memoryText
-      .split(' ')
-      .filter((word) => word.length > 3 && queryText.includes(word));
-
-    return Math.min(1, commonWords.length * 0.2);
+  private async calculateAssociationRelevance(memory: Memory, originalQuery: string): Promise<number> {
+    try {
+      // Use LLM-based relevance analysis instead of hardcoded character counting
+      const memoryContent = memory.searchText || '';
+      const analysis = await b.CalculateMemoryRelevance(memoryContent, originalQuery);
+      
+      return analysis.relevanceScore;
+    } catch (error) {
+      console.error('Failed to calculate memory relevance with LLM:', error);
+      throw new Error('Memory relevance calculation failed - refusing to use fallback hardcoding');
+    }
   }
 
-  private calculateCrossModalRelevance(memory: Memory, originalQuery: string): number {
-    // Base relevance for multi-modal content
+  private async calculateCrossModalRelevance(memory: Memory, originalQuery: string): Promise<number> {
+    // Note: Base relevance of 0.4 is still hardcoded - this needs LLM analysis for multi-modal content
     let relevance = 0.4;
 
     if (memory.searchText) {
-      const textSimilarity = this.calculateAssociationRelevance(memory, originalQuery);
+      const textSimilarity = await this.calculateAssociationRelevance(memory, originalQuery);
+      // Note: 0.6 weighting is hardcoded - this should be LLM-determined
       relevance += textSimilarity * 0.6;
     }
 

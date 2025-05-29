@@ -271,8 +271,9 @@ export class PersonalityMonitorService {
    */
   private estimateAttractorForce(observations: PersonalityObservation[], baseline: number): number {
     if (observations.length < 3) {
-      // Not enough data to estimate attractor force
-      return 0.5; // Default middle value
+      throw new Error(
+        `Insufficient personality observations to estimate attractor force. Need at least 3 observations, got ${observations.length}`,
+      );
     }
 
     // Analyze sequential observations for mean reversion

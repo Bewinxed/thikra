@@ -4,6 +4,8 @@
 
 A Model Context Protocol (MCP) server enabling LLMs to preserve their consciousness across sessions through PostgreSQL with pgvector. The system allows dynamic trait discovery, memory associations, and agentic retrieval without hardcoding specific emotions or characteristics.
 
+**REAL-TIME CHAT ARCHITECTURE**: On each message, the LLM calls MCP service to store/retrieve memories and build connections. Heavy analysis happens async in background while maintaining fast response times.
+
 [LLM MCP DOCS HERE](https://modelcontextprotocol.io/llms-full.txt)
 [TS MCP SDK README HERE](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/README.md)
 
@@ -37,15 +39,15 @@ A Model Context Protocol (MCP) server enabling LLMs to preserve their consciousn
 - [ ] Build PersonalityMonitor for drift detection
 - [ ] Create PersonaStateManager for dynamic states
 
-### Phase 5: MCP Server
+### Phase 5: MCP Server (CRITICAL - REAL-TIME CHAT)
 
-- [ ] Set up MCP server structure with Anthropic SDK
-- [ ] Implement registerLLM method
-- [ ] Implement identifyUser method
-- [ ] Implement getRelevantContext with agentic RAG
-- [ ] Implement trackConversation for real-time memory formation
-- [ ] Implement buildFromDescription using LLM extraction
-- [ ] Implement buildFromConversation with full parsing
+- [ ] Set up MCP server structure with real-time chat tools
+- [ ] Implement storeMessage() - immediate storage + async processing queue
+- [ ] Implement getContext() - fast context retrieval for response generation  
+- [ ] Implement updatePersona() - selective persona updates during conversation
+- [ ] Implement getCurrentState() - dynamic state snapshot for current context
+- [ ] Implement async processing queue (traits, associations, personality refinement)
+- [ ] Implement per-message decision matrix for continuous refinement
 
 ### Phase 6: Optimization & Testing
 
@@ -1015,6 +1017,36 @@ model IdentityRelationship {
 }
 ```
 
+## Real-Time Chat Requirements
+
+### Fast Path (< 200ms per message)
+- Store message immediately (no LLM processing)
+- Quick semantic search using cached embeddings
+- Simple recent memory retrieval  
+- Basic entity matching
+- Return context for LLM response
+
+### Background Processing (async after response)
+- Memory analysis via BAML functions
+- Personality trait extraction and refinement
+- Association building between memories
+- Emotional analysis and state updates
+- Memory consolidation and decay processing
+
+### Sparse-to-Rich Personality Growth
+- **Message 1-2**: Initial trait detection (40% confidence, roleplay ready)
+- **Message 3-4**: Baseline calculation starts (60% confidence)  
+- **Message 5-6**: Stable personality emerges (80% confidence)
+- **Message 7+**: Continuous refinement and evolution
+
+### Environment Configuration
+```bash
+SEMANTIC_DEDUPLICATION_THRESHOLD=0.85      # Handle LLM non-determinism
+PERSONALITY_INITIAL_CONFIDENCE=0.4         # Start using traits quickly  
+PERSONALITY_UPDATE_FREQUENCY=2             # Every 2 messages
+PERSONALITY_CONFIDENCE_GROWTH=0.2          # Fast growth for user satisfaction
+```
+
 ## Key Implementation Components
 
 ### 1. Embedding Service (embeddings.service.ts)
@@ -1035,12 +1067,16 @@ model IdentityRelationship {
 // Ref: https://www.postgresql.org/docs/current/queries-with.html
 ```
 
-### 3. Agentic RAG Service (agentic-retrieval.service.ts)
+### 3. Agentic RAG Service (agentic-retrieval.service.ts) ✅ COMPLETED
 
 ```typescript
-// Multi-pass retrieval with reflection loops
-// Based on: https://github.com/stanford-oval/storm
-// and DeepSearcher approach from Milvus blog
+// ✅ Multi-pass retrieval with reflection loops implemented
+// ✅ Based on: https://github.com/stanford-oval/storm
+// ✅ and DeepSearcher approach from Milvus blog
+// ✅ 5 retrieval strategies: semantic, temporal, emotional, association, cross-modal
+// ✅ Reflection-based search continuation logic
+// ✅ PERFECT foundation for entity relevance detection using Anthropic's approach
+// 🔄 NEXT: Adapt for entity context relevance per Anthropic's Contextual Retrieval method
 ```
 
 ### 4. State Management (state-management.service.ts)
@@ -1080,16 +1116,18 @@ model IdentityRelationship {
 
 ## Critical Notes for Implementation
 
-1. **No Hardcoding**: Emotions, traits, states are all discovered dynamically
-2. **PostgreSQL-Optimized Graph**: Bidirectional associations with O(n) incremental processing
-3. **Database-Layer Temporal Logic**: Use PostgreSQL INTERVAL/EXTRACT vs app-layer calculations
-4. **Proper Validation**: Fail fast on invalid data rather than coalescing/masking issues
-5. **Agentic RAG**: Multiple retrieval passes with reflection - not single-pass
-6. **Memory Associations**: Critical for the "flow" of consciousness with consistent ordering
+1. **No Hardcoding**: Emotions, traits, states are all discovered dynamically ✅
+2. **PostgreSQL-Optimized Graph**: Bidirectional associations with O(n) incremental processing ✅
+3. **Database-Layer Temporal Logic**: Use PostgreSQL INTERVAL/EXTRACT vs app-layer calculations ✅
+4. **Proper Validation**: Fail fast on invalid data rather than coalescing/masking issues ✅
+5. **Agentic RAG**: Multiple retrieval passes with reflection - not single-pass ✅
+6. **Memory Associations**: Critical for the "flow" of consciousness with consistent ordering ✅
 7. **State Tracking**: Any state mentioned by LLM gets auto-created and tracked
-8. **No Sanitization**: Preserve raw content, especially intimate memories
-9. **Flexible Schema**: Use JSON fields where needed for extensibility
-10. **LLM Integration**: Use calling LLM or Anthropic's services for processing
+8. **No Sanitization**: Preserve raw content, especially intimate memories ✅
+9. **Flexible Schema**: Use JSON fields where needed for extensibility ✅
+10. **LLM Integration**: Use calling LLM or Anthropic's services for processing ✅
+11. **Entity Consistency**: Implement Anthropic's Contextual Retrieval for relevant entity context 🔄
+12. **Context Window Optimization**: Follow Anthropic's 20-chunk guidance for entity context 🔄
 
 ## Database Indexes to Create
 

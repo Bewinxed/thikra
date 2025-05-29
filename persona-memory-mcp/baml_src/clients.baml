@@ -114,3 +114,42 @@ client<llm> OpenRouterSonnet {
     }
   }
 }
+
+// DeepSeek client for handling intimate persona content
+client<llm> OpenRouterDeepSeek {
+  provider openai
+  options {
+    model "deepseek/deepseek-chat"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+    }
+    temperature 0.4  // Slightly higher for understanding nuanced content
+    request_timeout 120000  // 2 minute timeout
+  }
+}
+
+// GPT-4o-mini for persona extraction (less restrictive)
+client<llm> OpenRouterGPT4oMini {
+  provider openai
+  options {
+    model "openai/gpt-4o-mini"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+    }
+    temperature 0.3
+  }
+}
+
+// Fallback client for persona extraction - tries multiple models
+client<llm> PersonaExtractionFallback {
+  provider fallback
+  options {
+    strategy [OpenRouterGPT4oMini, OpenRouterDeepSeek, OpenRouterHaiku]
+  }
+}

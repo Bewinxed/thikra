@@ -30,7 +30,23 @@ interface MemoryStrengthUpdate {
  * - Reconsolidation: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3664230/
  */
 export class MemoryConsolidationService {
-  constructor(private prisma: PrismaClient) {}
+  // Configuration based on memory science research
+  // Source: Memory reconsolidation window typically 1-6 hours (Nader & Hardt, 2009)
+  private readonly reconsolidationWindowHours: number;
+
+  constructor(
+    private prisma: PrismaClient,
+    reconsolidationWindowHours: number = Number.parseFloat(
+      process.env.MEMORY_RECONSOLIDATION_WINDOW_HOURS || '3',
+    ),
+  ) {
+    if (reconsolidationWindowHours <= 0 || reconsolidationWindowHours > 24) {
+      throw new Error(
+        `Invalid reconsolidation window: ${reconsolidationWindowHours} hours. Must be between 0-24 hours based on memory research.`,
+      );
+    }
+    this.reconsolidationWindowHours = reconsolidationWindowHours;
+  }
 
   /**
    * Initialize consolidation tracking for a new memory
@@ -282,7 +298,7 @@ export class MemoryConsolidationService {
         inReconsolidation: true,
         windowOpenedAt: {
           not: null,
-          lt: new Date(now.getTime() - 6 * 60 * 60 * 1000), // 6 hours ago
+          lt: new Date(now.getTime() - this.reconsolidationWindowHours * 60 * 60 * 1000),
         },
       },
     });

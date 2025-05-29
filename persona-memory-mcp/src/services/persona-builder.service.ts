@@ -117,11 +117,11 @@ export class PersonaBuilder {
   ): Promise<Persona> {
     const personaId = uuidv4();
 
-    // Create base persona
+    // Create base persona with temporary name (will generate dynamic name after extraction)
     const persona = await this.prisma.persona.create({
       data: {
         id: personaId,
-        name: 'Discovered Persona',
+        name: 'Building...',
         protectedTraits: [],
       },
     });
@@ -134,6 +134,9 @@ export class PersonaBuilder {
     const extraction = await this.multiPassExtraction(allContent);
     await this.saveExtractionResults(personaId, extraction);
 
+    // Generate and update persona name based on extracted traits
+    await this.updatePersonaName(personaId, extraction);
+
     return persona;
   }
 
@@ -144,13 +147,16 @@ export class PersonaBuilder {
     const persona = await this.prisma.persona.create({
       data: {
         id: personaId,
-        name: 'Described Persona',
+        name: 'Building...',
         protectedTraits: [],
       },
     });
 
     const extraction = await this.multiPassExtraction(description);
     await this.saveExtractionResults(personaId, extraction);
+
+    // Generate and update persona name based on extracted traits
+    await this.updatePersonaName(personaId, extraction);
 
     return persona;
   }
@@ -357,11 +363,18 @@ export class PersonaBuilder {
       }
       // Validate appliesToEntityId against existing entities
       if (boundaryData.appliesToEntityId) {
-        const entityExists = await this.prisma.entity.findUnique({
-          where: { id: boundaryData.appliesToEntityId },
-        });
-        if (!entityExists) {
+        // Check if it's a valid UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(boundaryData.appliesToEntityId)) {
+          // Not a valid UUID, skip entity validation
           boundaryData.appliesToEntityId = undefined;
+        } else {
+          const entityExists = await this.prisma.entity.findUnique({
+            where: { id: boundaryData.appliesToEntityId },
+          });
+          if (!entityExists) {
+            boundaryData.appliesToEntityId = undefined;
+          }
         }
       }
       await this.prisma.boundary.create({
@@ -379,5 +392,51 @@ export class PersonaBuilder {
         isConsciousOf: true,
       },
     });
+  }
+
+  /**
+   * Update persona name based on extracted characteristics
+   * Replaces hardcoded generic names with dynamic generation
+   */
+  private async updatePersonaName(personaId: string, extraction: Record<string, unknown>): Promise<void> {
+    try {
+      // Prepare context for name generation
+      const identityData = extraction.identity as Record<string, unknown> | undefined;
+      const emotionalData = extraction.emotional as Record<string, unknown> | undefined;
+      
+      const identityComponents = identityData?.identityComponents as Array<{content: string; componentType: string}> | undefined;
+      const emotionalPatterns = emotionalData?.emotionalPatterns as Array<{description: string}> | undefined;
+      
+      const personalityTraits = identityComponents?.map(c => c.content).join('; ') || '';
+      const emotionalPatternsStr = emotionalPatterns?.map(p => p.description).join('; ') || '';
+      const identityComponentsStr = identityComponents?.map(c => `${c.componentType}: ${c.content}`).join('; ') || '';
+
+      // Generate dynamic name using BAML function
+      const nameResult = await b.GeneratePersonaName(
+        personalityTraits,
+        emotionalPatternsStr,
+        identityComponentsStr,
+      );
+
+      // Update persona with generated name
+      await this.prisma.persona.update({
+        where: { id: personaId },
+        data: { name: nameResult.name },
+      });
+
+      console.log(
+        `Updated persona ${personaId} name to: ${nameResult.name} (${nameResult.reasoning})`,
+      );
+    } catch (error) {
+      console.warn(
+        `Failed to generate dynamic name for persona ${personaId}, using fallback:`,
+        error,
+      );
+      // Fallback to descriptive name based on available data
+      await this.prisma.persona.update({
+        where: { id: personaId },
+        data: { name: `Persona-${personaId.slice(0, 8)}` },
+      });
+    }
   }
 }

@@ -603,7 +603,9 @@ export class MemoryGraphService {
     return chains.map((c) => {
       const duration = Number(c.duration_hours);
       if (Number.isNaN(duration) || duration < 0) {
-        throw new Error(`Invalid temporal chain duration: ${c.duration_hours} for chain ${c.chain_id}`);
+        throw new Error(
+          `Invalid temporal chain duration: ${c.duration_hours} for chain ${c.chain_id}`,
+        );
       }
       return {
         chainId: Number(c.chain_id),

@@ -14,23 +14,25 @@ class IdentityExtractionResult {
 }
 
 function ExtractIdentityComponents(content: string) -> IdentityExtractionResult {
-  client OpenRouterHaiku
+  client OpenRouterGPT4oMini
   
   prompt #"
-    {{ _.role("system", cache_control={"type": "ephemeral"}) }}
-    Extract identity components from this content. Look for:
-    - Names, aliases, self-identifications
-    - Core beliefs and values
-    - Self-concept and identity markers
-    - Roles and responsibilities
-    - Personal history references
+    {{ _.role("system") }}
+    You are analyzing character dialogue from a creative writing piece to understand the character's identity and traits. This is for literary analysis and character development purposes.
     
-    Focus on WHO this persona is at their core. Be specific and preserve intimate details.
+    Extract identity components from this character's dialogue:
+    - Character names and how they identify themselves
+    - Their stated beliefs and values
+    - How they see themselves (self-concept)
+    - Their role in the narrative
+    - Any backstory they reference
+    
+    Focus on understanding WHO this character is. Be thorough and specific.
     
     {{ ctx.output_format }}
     
     {{ _.role("user") }}
-    Content to analyze:
+    Character dialogue to analyze:
     """
     {{ content }}
     """
@@ -51,10 +53,10 @@ class PhysicalExtractionResult {
 }
 
 function ExtractPhysicalAttributes(content: string) -> PhysicalExtractionResult {
-  client OpenRouterHaiku
+  client OpenRouterGPT4oMini
   
   prompt #"
-    {{ _.role("system", cache_control={"type": "ephemeral"}) }}
+    {{ _.role("system") }}
     Extract physical attributes and characteristics:
     - Body features and descriptions
     - Physical responses and reactions
@@ -90,7 +92,7 @@ class EmotionalExtractionResult {
 }
 
 function ExtractEmotionalPatterns(content: string) -> EmotionalExtractionResult {
-  client OpenRouterHaiku
+  client OpenRouterGPT4oMini
   
   prompt #"
     Extract emotional patterns and personality traits:
@@ -148,7 +150,7 @@ class DesiresExtractionResult {
 }
 
 function ExtractDesiresAndBoundaries(content: string) -> DesiresExtractionResult {
-  client OpenRouterHaiku
+  client OpenRouterGPT4oMini
   
   prompt #"
     Extract desires, needs, boundaries, and preferences:
@@ -175,6 +177,91 @@ function ExtractDesiresAndBoundaries(content: string) -> DesiresExtractionResult
 // === PASS 6: META-COGNITIVE PROCESSES ===
 // TODO: Implement metacognitive extraction
 
+// === ENTITY EXTRACTION ===
+enum EntityType {
+  Human
+  Llm
+  System
+  Unknown
+}
+
+class ExtractedEntity {
+  name string @description("The entity name as it should be stored")
+  entityType EntityType @description("Type of entity")
+  role string @description("Role in the conversation: speaker, addressee, mentioned_third_party")
+  referenceType string @description("How they were referenced: proper_name, pronoun, title, nickname")
+  originalReference string @description("The original text that referenced this entity")
+}
+
+class ConversationEntityResult {
+  entities ExtractedEntity[] @description("All entities found in the message")
+  speakerEntity string @description("The primary speaker based on message role")
+  addresseeEntities string[] @description("Who the speaker is addressing")
+}
+
+function ExtractConversationEntities(
+  messages: string, 
+  personaName: string,
+  channel: string,
+  existingEntities: string
+) -> ConversationEntityResult {
+  client OpenRouterGPT4oMini
+  
+  prompt #"
+    Analyze this conversation and identify all **people and characters** involved. Do NOT extract random words.
+    
+    **WHAT TO EXTRACT:**
+    - Real people (humans, users, speakers)
+    - AI assistants/personas (like {{ personaName }})
+    - Characters mentioned by name
+    - People referred to by relationship (master, friend, etc.)
+    
+    **WHAT NOT TO EXTRACT:**
+    - Random words or pronouns (you, we, I, me, etc.)
+    - Common nouns (name, thing, something, etc.)
+    - Abstract concepts
+    - UUIDs or technical identifiers
+    
+    Conversation:
+    {{ messages }}
+    
+    Context:
+    - AI persona name: {{ personaName }}
+    - Channel: {{ channel }}
+    
+    Existing entities from previous conversations:
+    {{ existingEntities }}
+    
+    **Entity Consolidation Process:**
+    1. **Identify conversation participants**: 
+       - The human user sending messages (role: "user")
+       - The AI assistant ({{ personaName }}) responding
+       - Any third parties mentioned
+    
+    2. **Entity type determination**:
+       - {{ personaName }} = Llm type
+       - Message senders with role "user" = Human type  
+       - People the AI addresses (master, boss, friend, etc.) = Human type (same as message sender)
+       - Characters mentioned by name = Usually Human type unless specified otherwise
+    
+    3. **Apply consolidation logic**: 
+       - The message sender (role: "user") and anyone the AI addresses directly are typically the SAME person
+       - Different titles/names for the same conversational participant should be consolidated
+       - Choose the most appropriate name for the consolidated entity
+    
+    4. **Existing entity priority**: If an entity matches an existing one, use the EXISTING entity name exactly
+    
+    **Critical insight**: When the AI responds to someone with titles like "master", "boss", "friend" - this is usually the same person who sent the message.
+    
+    **Entity Requirements:**
+    - Must be a person, character, or AI
+    - Must play a role in the conversation
+    - Must be consistently identifiable
+    
+    {{ ctx.output_format }}
+  "#
+}
+
 // === PASS 7: SENSORY PREFERENCES ===
 class SpeechPattern {
   patternType string @description("Type: greeting, farewell, filler, catchphrase, etc.")
@@ -190,7 +277,7 @@ class SpeechExtractionResult {
 }
 
 function ExtractSpeechPatterns(content: string) -> SpeechExtractionResult {
-  client OpenRouterHaiku
+  client OpenRouterGPT4oMini
   
   prompt #"
     Extract speech patterns and communication style:
@@ -205,6 +292,34 @@ function ExtractSpeechPatterns(content: string) -> SpeechExtractionResult {
     """
     {{ content }}
     """
+    
+    {{ ctx.output_format }}
+  "#
+}
+
+class PersonaName {
+  name string @description("A descriptive name reflecting the persona's key characteristics")
+  reasoning string @description("Explanation of why this name fits the persona")
+}
+
+function GeneratePersonaName(personalityTraits: string, emotionalPatterns: string, identityComponents: string) -> PersonaName {
+  client OpenRouterGPT4oMini
+  
+  prompt #"
+    Generate a descriptive name for a persona based on their extracted characteristics.
+    
+    The name should:
+    - Reflect key personality traits or emotional patterns
+    - Be distinctive and memorable
+    - Capture the essence of who this persona is
+    - Avoid generic terms like "Persona" or "Character"
+    - Be appropriate for the personality discovered
+    
+    Personality Traits: {{ personalityTraits }}
+    Emotional Patterns: {{ emotionalPatterns }}
+    Identity Components: {{ identityComponents }}
+    
+    Create a name that someone would recognize as fitting this specific personality.
     
     {{ ctx.output_format }}
   "#
