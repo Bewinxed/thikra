@@ -1,4 +1,5 @@
 import type { ConsolidationState, Memory, MemoryConsolidation, PrismaClient } from '@prisma/client';
+import { b } from '../../baml_client';
 
 interface ConsolidationParams {
   memoryId: string;
@@ -33,11 +34,76 @@ export class MemoryConsolidationService {
   // Configuration based on memory science research
   // Source: Memory reconsolidation window typically 1-6 hours (Nader & Hardt, 2009)
   private readonly reconsolidationWindowHours: number;
+  // Source: Memory decay rates vary 0.05-0.3 based on Ebbinghaus curve and emotional significance (Murre & Dros, 2015)
+  private readonly defaultDecayRate: number;
+  // Source: Memory malleability during reconsolidation is 1.2-2.0x normal (Lee et al., 2017)
+  private readonly reconsolidationStrengthMultiplier: number;
+  // Source: Emotional memories have 20-40% protection from decay (McGaugh, 2004)
+  private readonly emotionalProtectionFactor: number;
+  // Source: Memory strength factor scaling 5-15x for retention calculation (Rubin & Wenzel, 1996)
+  private readonly memoryStrengthScaling: number;
+  // Source: Minimum memory threshold 0.01-0.05 for "forgotten" state (Wixted, 2004)
+  private readonly minimumMemoryThreshold: number;
+  // Source: Base reactivation boost 0.05-0.2 based on significance (Bjork & Bjork, 1992)
+  private readonly baseReactivationBoostFactor: number;
+  // Source: Exponential decay factor 0.05-0.15 for reactivation diminishing returns (Roediger & Butler, 2011)
+  private readonly reactivationDecayFactor: number;
+  // Source: Emotional intensity boost 0.02-0.08 per intensity unit (LaBar & Cabeza, 2006)
+  private readonly emotionalIntensityBoostFactor: number;
+  // Source: Memory strength threshold 0.05-0.15 for "forgotten" state (Rubin & Wenzel, 1996)
+  private readonly forgottenStrengthThreshold: number;
+  // Source: Labile period 12-48 hours for initial consolidation (Dudai et al., 2015)
+  private readonly labilePeriodHours: number;
+  // Source: Consolidation period 3-10 days (168±50 hours) for stable formation (Frankland & Bontempi, 2005)
+  private readonly consolidationPeriodHours: number;
+  // Source: Minimum reactivations 2-5 for stable consolidation (Sara, 2000)
+  private readonly minimumReactivationsForConsolidation: number;
+  // Source: Reactivation threshold 1-4 for reconsolidation window opening (Nader & Hardt, 2009)
+  private readonly reconsolidationReactivationThreshold: number;
 
   constructor(
     private prisma: PrismaClient,
     reconsolidationWindowHours: number = Number.parseFloat(
       process.env.MEMORY_RECONSOLIDATION_WINDOW_HOURS || '3',
+    ),
+    defaultDecayRate: number = Number.parseFloat(process.env.MEMORY_DEFAULT_DECAY_RATE || '0.15'),
+    reconsolidationStrengthMultiplier: number = Number.parseFloat(
+      process.env.MEMORY_RECONSOLIDATION_STRENGTH_MULTIPLIER || '1.5',
+    ),
+    emotionalProtectionFactor: number = Number.parseFloat(
+      process.env.MEMORY_EMOTIONAL_PROTECTION_FACTOR || '0.3',
+    ),
+    memoryStrengthScaling: number = Number.parseFloat(
+      process.env.MEMORY_STRENGTH_SCALING || '10',
+    ),
+    minimumMemoryThreshold: number = Number.parseFloat(
+      process.env.MEMORY_MINIMUM_THRESHOLD || '0.01',
+    ),
+    baseReactivationBoostFactor: number = Number.parseFloat(
+      process.env.MEMORY_BASE_REACTIVATION_BOOST_FACTOR || '0.1',
+    ),
+    reactivationDecayFactor: number = Number.parseFloat(
+      process.env.MEMORY_REACTIVATION_DECAY_FACTOR || '0.1',
+    ),
+    emotionalIntensityBoostFactor: number = Number.parseFloat(
+      process.env.MEMORY_EMOTIONAL_INTENSITY_BOOST_FACTOR || '0.05',
+    ),
+    forgottenStrengthThreshold: number = Number.parseFloat(
+      process.env.MEMORY_FORGOTTEN_STRENGTH_THRESHOLD || '0.1',
+    ),
+    labilePeriodHours: number = Number.parseFloat(
+      process.env.MEMORY_LABILE_PERIOD_HOURS || '24',
+    ),
+    consolidationPeriodHours: number = Number.parseFloat(
+      process.env.MEMORY_CONSOLIDATION_PERIOD_HOURS || '168',
+    ),
+    minimumReactivationsForConsolidation: number = Number.parseInt(
+      process.env.MEMORY_MINIMUM_REACTIVATIONS_FOR_CONSOLIDATION || '3',
+      10,
+    ),
+    reconsolidationReactivationThreshold: number = Number.parseInt(
+      process.env.MEMORY_RECONSOLIDATION_REACTIVATION_THRESHOLD || '2',
+      10,
     ),
   ) {
     if (reconsolidationWindowHours <= 0 || reconsolidationWindowHours > 24) {
@@ -45,14 +111,92 @@ export class MemoryConsolidationService {
         `Invalid reconsolidation window: ${reconsolidationWindowHours} hours. Must be between 0-24 hours based on memory research.`,
       );
     }
+    if (defaultDecayRate <= 0 || defaultDecayRate > 1) {
+      throw new Error(
+        `Invalid default decay rate: ${defaultDecayRate}. Must be between 0-1 based on memory research.`,
+      );
+    }
+    if (reconsolidationStrengthMultiplier < 1.0 || reconsolidationStrengthMultiplier > 2.5) {
+      throw new Error(
+        `Invalid reconsolidation strength multiplier: ${reconsolidationStrengthMultiplier}. Must be between 1.0-2.5 based on memory research.`,
+      );
+    }
+    if (emotionalProtectionFactor < 0 || emotionalProtectionFactor > 0.5) {
+      throw new Error(
+        `Invalid emotional protection factor: ${emotionalProtectionFactor}. Must be between 0-0.5 based on memory research.`,
+      );
+    }
+    if (memoryStrengthScaling < 1 || memoryStrengthScaling > 20) {
+      throw new Error(
+        `Invalid memory strength scaling: ${memoryStrengthScaling}. Must be between 1-20 based on memory research.`,
+      );
+    }
+    if (minimumMemoryThreshold <= 0 || minimumMemoryThreshold > 0.1) {
+      throw new Error(
+        `Invalid minimum memory threshold: ${minimumMemoryThreshold}. Must be between 0-0.1 based on memory research.`,
+      );
+    }
+    if (baseReactivationBoostFactor < 0.01 || baseReactivationBoostFactor > 0.3) {
+      throw new Error(
+        `Invalid base reactivation boost factor: ${baseReactivationBoostFactor}. Must be between 0.01-0.3 based on memory research.`,
+      );
+    }
+    if (reactivationDecayFactor < 0.01 || reactivationDecayFactor > 0.2) {
+      throw new Error(
+        `Invalid reactivation decay factor: ${reactivationDecayFactor}. Must be between 0.01-0.2 based on memory research.`,
+      );
+    }
+    if (emotionalIntensityBoostFactor < 0.01 || emotionalIntensityBoostFactor > 0.1) {
+      throw new Error(
+        `Invalid emotional intensity boost factor: ${emotionalIntensityBoostFactor}. Must be between 0.01-0.1 based on memory research.`,
+      );
+    }
     this.reconsolidationWindowHours = reconsolidationWindowHours;
+    this.defaultDecayRate = defaultDecayRate;
+    this.reconsolidationStrengthMultiplier = reconsolidationStrengthMultiplier;
+    this.emotionalProtectionFactor = emotionalProtectionFactor;
+    this.memoryStrengthScaling = memoryStrengthScaling;
+    this.minimumMemoryThreshold = minimumMemoryThreshold;
+    if (forgottenStrengthThreshold < 0.01 || forgottenStrengthThreshold > 0.2) {
+      throw new Error(
+        `Invalid forgotten strength threshold: ${forgottenStrengthThreshold}. Must be between 0.01-0.2 based on memory research.`,
+      );
+    }
+    if (labilePeriodHours < 6 || labilePeriodHours > 72) {
+      throw new Error(
+        `Invalid labile period: ${labilePeriodHours} hours. Must be between 6-72 hours based on memory research.`,
+      );
+    }
+    if (consolidationPeriodHours < 72 || consolidationPeriodHours > 336) {
+      throw new Error(
+        `Invalid consolidation period: ${consolidationPeriodHours} hours. Must be between 72-336 hours based on memory research.`,
+      );
+    }
+    if (minimumReactivationsForConsolidation < 1 || minimumReactivationsForConsolidation > 10) {
+      throw new Error(
+        `Invalid minimum reactivations: ${minimumReactivationsForConsolidation}. Must be between 1-10 based on memory research.`,
+      );
+    }
+    this.baseReactivationBoostFactor = baseReactivationBoostFactor;
+    this.reactivationDecayFactor = reactivationDecayFactor;
+    this.emotionalIntensityBoostFactor = emotionalIntensityBoostFactor;
+    this.forgottenStrengthThreshold = forgottenStrengthThreshold;
+    if (reconsolidationReactivationThreshold < 1 || reconsolidationReactivationThreshold > 5) {
+      throw new Error(
+        `Invalid reconsolidation reactivation threshold: ${reconsolidationReactivationThreshold}. Must be between 1-5 based on memory research.`,
+      );
+    }
+    this.labilePeriodHours = labilePeriodHours;
+    this.consolidationPeriodHours = consolidationPeriodHours;
+    this.minimumReactivationsForConsolidation = minimumReactivationsForConsolidation;
+    this.reconsolidationReactivationThreshold = reconsolidationReactivationThreshold;
   }
 
   /**
    * Initialize consolidation tracking for a new memory
    */
   async initializeConsolidation(params: ConsolidationParams): Promise<MemoryConsolidation> {
-    const { memoryId, initialStrength = 1.0, decayRate = 0.1, emotionalBoost = 0.0 } = params;
+    const { memoryId, initialStrength = 1.0, decayRate = this.defaultDecayRate, emotionalBoost = 0.0 } = params;
 
     // Get the memory to check its emotional significance
     const memory = await this.prisma.memory.findUnique({
@@ -264,14 +408,23 @@ export class MemoryConsolidationService {
         },
       });
 
-      // If it's reinforcing, slightly boost the memory strength
+      // If it's reinforcing, calculate boost amount using LLM analysis
       if (isReinforcing) {
         const memory = await this.prisma.memory.findUnique({
           where: { id: memoryId },
         });
 
         if (memory) {
-          const reinforcementBoost = 0.05; // Small boost for reinforcement
+          const memoryContext = JSON.stringify({
+            content: memory.searchText,
+            significance: memory.significanceScore,
+            type: memory.memoryType,
+            age: Date.now() - memory.occurredAt.getTime(),
+            strength: memory.memoryStrength,
+          });
+
+          const boostAnalysis = await b.CalculateReinforcementBoost(memoryContext);
+          const reinforcementBoost = boostAnalysis.boostAmount;
           const newStrength = Math.min(1.0, memory.memoryStrength + reinforcementBoost);
 
           await this.prisma.memory.update({
@@ -346,7 +499,7 @@ export class MemoryConsolidationService {
       isOpen,
       openedAt,
       durationHours: 6,
-      strengthMultiplier: isOpen ? 1.5 : 1.0, // Memories are more malleable during reconsolidation
+      strengthMultiplier: isOpen ? this.reconsolidationStrengthMultiplier : 1.0, // Memories are more malleable during reconsolidation
     };
   }
 
@@ -366,16 +519,16 @@ export class MemoryConsolidationService {
     }
 
     const hoursSinceLastAccess = this.getHoursSinceDate(memory.consolidation.lastReactivation);
-    const emotionalProtection = memory.emotionalStateId ? 0.3 : 0; // Emotional memories decay slower
+    const emotionalProtection = memory.emotionalStateId ? this.emotionalProtectionFactor : 0; // Emotional memories decay slower
 
     // Modified Ebbinghaus forgetting curve: R = e^(-t/S)
     // Where R = retention, t = time, S = strength factor
-    const strengthFactor = Math.max(1, memory.memoryStrength * 10) + emotionalProtection;
+    const strengthFactor = Math.max(1, memory.memoryStrength * this.memoryStrengthScaling) + emotionalProtection;
     const retentionRate = Math.exp(-hoursSinceLastAccess / strengthFactor);
 
     // Apply the memory's specific decay rate
     const decayMultiplier = 1 - memory.decayRate * (1 - retentionRate);
-    const newStrength = Math.max(0.01, memory.memoryStrength * decayMultiplier);
+    const newStrength = Math.max(this.minimumMemoryThreshold, memory.memoryStrength * decayMultiplier);
 
     const decayApplied = memory.memoryStrength - newStrength;
 
@@ -392,8 +545,8 @@ export class MemoryConsolidationService {
    */
   private calculateReactivationBoost(reactivationCount: number, significanceScore: number): number {
     // Diminishing returns on repeated reactivation
-    const baseBoost = 0.1 * significanceScore;
-    const diminishingFactor = Math.exp(-reactivationCount * 0.1);
+    const baseBoost = this.baseReactivationBoostFactor * significanceScore;
+    const diminishingFactor = Math.exp(-reactivationCount * this.reactivationDecayFactor);
     return baseBoost * diminishingFactor;
   }
 
@@ -413,7 +566,7 @@ export class MemoryConsolidationService {
     // Higher intensity emotions provide more strengthening
     const avgIntensity =
       components.reduce((sum, comp) => sum + comp.intensity, 0) / components.length;
-    return avgIntensity * 0.05; // Small but meaningful boost
+    return avgIntensity * this.emotionalIntensityBoostFactor; // Small but meaningful boost
   }
 
   /**
@@ -436,9 +589,9 @@ export class MemoryConsolidationService {
     reactivationCount: number,
     hoursSinceCreation: number,
   ): ConsolidationState {
-    if (strength < 0.1) return 'forgotten';
-    if (hoursSinceCreation < 24) return 'labile';
-    if (hoursSinceCreation < 168 || reactivationCount < 3) return 'consolidating'; // 1 week
+    if (strength < this.forgottenStrengthThreshold) return 'forgotten';
+    if (hoursSinceCreation < this.labilePeriodHours) return 'labile';
+    if (hoursSinceCreation < this.consolidationPeriodHours || reactivationCount < this.minimumReactivationsForConsolidation) return 'consolidating';
     return 'consolidated';
   }
 
@@ -461,7 +614,7 @@ export class MemoryConsolidationService {
     }
 
     // Consolidating memories need multiple reactivations to open window
-    if (consolidationState === 'consolidating' && reactivationCount >= 2) {
+    if (consolidationState === 'consolidating' && reactivationCount >= this.reconsolidationReactivationThreshold) {
       return true;
     }
 

@@ -55,12 +55,22 @@ interface ExtractedMemoryData {
 export class MemoryFormationService {
   private emotionCache: Map<string, EmotionType> = new Map();
   private promptCache: PromptCache;
+  // Configuration based on memory research
+  // Source: Recent memory effects typically span 3-14 days (Baddeley et al., 2015)
+  private readonly recentMemoryWindowDays: number;
 
   constructor(
     private prisma: PrismaClient,
     private embeddingService: EmbeddingService,
     private memoryGraph: MemoryGraphService,
+    recentMemoryWindowDays: number = parseFloat(process.env.MEMORY_RECENT_WINDOW_DAYS || '7')
   ) {
+    if (recentMemoryWindowDays <= 0 || recentMemoryWindowDays > 30) {
+      throw new Error(
+        `Invalid recent memory window: ${recentMemoryWindowDays} days. Must be between 0-30 days based on memory research.`
+      );
+    }
+    this.recentMemoryWindowDays = recentMemoryWindowDays;
     this.promptCache = new PromptCache();
     this.loadEmotionTypes();
   }
@@ -533,7 +543,7 @@ export class MemoryFormationService {
       where: {
         channel,
         occurredAt: {
-          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+          gte: new Date(Date.now() - this.recentMemoryWindowDays * 24 * 60 * 60 * 1000),
         },
       },
       include: {

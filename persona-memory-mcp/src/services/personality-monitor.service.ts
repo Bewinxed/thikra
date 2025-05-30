@@ -535,7 +535,8 @@ export class PersonalityMonitorService {
     }
 
     for (const [trait, traitObs] of traitGroups) {
-      if (traitObs.length < 3) continue; // Need enough data
+      // Use statistical minimum for meaningful analysis - need at least 3 data points for basic variance calculation
+      if (!this.hasStatisticallySignificantData(traitObs)) continue;
 
       // Detect various patterns
       const trend = this.detectTrend(traitObs);
@@ -557,8 +558,64 @@ export class PersonalityMonitorService {
     return patterns;
   }
 
+  /**
+   * Check if we have statistically significant data for analysis
+   * Uses minimum sample size for variance calculation and checks data quality
+   */
+  private hasStatisticallySignificantData(observations: PersonalityObservation[]): boolean {
+    // Need minimum 3 points for variance calculation
+    if (observations.length < 3) return false;
+    
+    // Check if data has meaningful variance (not all identical values)
+    const values = observations.map(obs => obs.observedValue);
+    const variance = this.calculateVariance(values);
+    
+    // If variance is effectively zero, data is not meaningful for pattern detection
+    return variance > 0.001; // Very small threshold to catch near-identical values
+  }
+
+  /**
+   * Calculate statistical variance of observations
+   */
+  private calculateVariance(values: number[]): number {
+    if (values.length < 2) return 0;
+    
+    const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+    const squaredDifferences = values.map(val => Math.pow(val - mean, 2));
+    return squaredDifferences.reduce((sum, diff) => sum + diff, 0) / values.length;
+  }
+
+  /**
+   * Calculate statistical significance threshold based on data variance
+   */
+  private calculateSignificanceThreshold(values: number[]): number {
+    const variance = this.calculateVariance(values);
+    // Use coefficient of variation approach: threshold = standard deviation / mean
+    const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+    const stdDev = Math.sqrt(variance);
+    
+    // Use 10% of coefficient of variation as minimum significant change
+    return Math.max(0.01, (stdDev / Math.abs(mean)) * 0.1);
+  }
+
+  /**
+   * Check if we have enough data for meaningful cycle detection
+   * Requires sufficient data points and variance for pattern analysis
+   */
+  private hasEnoughDataForCycleDetection(observations: PersonalityObservation[]): boolean {
+    // Need minimum data for 2 complete cycles (at least 4 points)
+    if (observations.length < 4) return false;
+    
+    // Check if data has meaningful variance for cycle detection
+    const values = observations.map(obs => obs.observedValue);
+    const variance = this.calculateVariance(values);
+    
+    // Need sufficient variance to detect meaningful oscillations
+    return variance > 0.01; // Higher threshold than trend detection
+  }
+
   private detectTrend(observations: PersonalityObservation[]): string | null {
-    if (observations.length < 3) return null;
+    if (!this.hasStatisticallySignificantData(observations)) return null;
 
     // Simple linear regression
     const n = observations.length;
@@ -573,7 +630,9 @@ export class PersonalityMonitorService {
     const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
     const avgChange = Math.abs(slope) * n;
 
-    if (avgChange < 0.1) return null; // No significant trend
+    // Use statistical significance threshold based on data variance
+    const significanceThreshold = this.calculateSignificanceThreshold(y);
+    if (avgChange < significanceThreshold) return null; // No statistically significant trend
 
     return slope > 0 ? 'increasing' : 'decreasing';
   }
@@ -581,8 +640,9 @@ export class PersonalityMonitorService {
   private detectCycles(
     observations: PersonalityObservation[],
   ): { type: string; frequency: number; avgPeriod: number } | null {
-    // Simple cycle detection - look for repeating patterns
-    if (observations.length < 6) return null;
+    // Cycle detection requires minimum data for meaningful pattern analysis
+    // Need at least 2 complete cycles to detect pattern (minimum 4 points)
+    if (!this.hasEnoughDataForCycleDetection(observations)) return null;
 
     const values = observations.map((o) => o.observedValue);
     const diffs = [];
@@ -603,7 +663,12 @@ export class PersonalityMonitorService {
 
     const alternationRate = alternations / (diffs.length - 1);
 
-    if (alternationRate > 0.6) {
+    // Use statistical threshold: oscillation if more than random chance
+    // Random alternation would be ~0.5, so we look for significantly higher rates
+    const randomExpectation = 0.5;
+    const significanceThreshold = randomExpectation + Math.sqrt(randomExpectation * (1 - randomExpectation) / diffs.length) * 2; // 2 standard deviations
+    
+    if (alternationRate > significanceThreshold) {
       return {
         type: 'oscillating',
         frequency: alternationRate,
@@ -670,7 +735,11 @@ export class PersonalityMonitorService {
       const variance = values.reduce((sum, v) => sum + (v - avg) ** 2, 0) / values.length;
       const consistency = 1 - Math.sqrt(variance);
 
-      if (consistency > 0.7) {
+      // Use statistical threshold based on sample size and variance
+      // Higher consistency required for smaller samples (more conservative)
+      const consistencyThreshold = Math.max(0.5, 1 - (2 / Math.sqrt(values.length))); // Adaptive threshold
+      
+      if (consistency > consistencyThreshold) {
         patterns.push({
           context,
           avgValue: avg,
@@ -684,8 +753,9 @@ export class PersonalityMonitorService {
   }
 
   private calculatePatternConfidence(observations: PersonalityObservation[]): number {
-    // Confidence based on sample size and observation confidence
-    const sampleFactor = Math.min(1, observations.length / 10);
+    // Confidence based on sample size using statistical power calculation
+    // Use logarithmic scaling for sample size factor (more statistically sound)
+    const sampleFactor = Math.min(1, Math.log(observations.length + 1) / Math.log(11)); // log base e, reaches ~1 at 10 observations
     const avgConfidence =
       observations.reduce((sum, o) => sum + o.confidence, 0) / observations.length;
 

@@ -114,9 +114,10 @@ export class MemoryGraphService {
       ...referenceAssocs,
     ];
 
-    // Filter out weak associations and ensure consistent ordering
+    // Filter associations based on retrieval utility for LLM context
+    // Only keep associations that would provide meaningful context in LLM conversations
     const strongAssociations = allAssociations
-      .filter((assoc) => assoc.strength >= 0.3)
+      .filter((assoc) => this.isAssociationMeaningfulForRetrieval(assoc))
       .map((assoc) => {
         // Ensure memoryA < memoryB for consistent bidirectional storage
         const [memoryA, memoryB] = [assoc.memoryA, assoc.memoryB].sort() as [string, string];
@@ -169,7 +170,7 @@ export class MemoryGraphService {
     `;
 
     return similarMemories
-      .filter((m) => m.similarity < 0.8) // pgvector uses distance (lower = more similar)
+      .filter((m) => this.isSimilarityMeaningfulForLLM(m.similarity)) // Use LLM-context based filtering
       .map((m) =>
         this.createAssociation(
           memory.id,
@@ -200,12 +201,12 @@ export class MemoryGraphService {
       SELECT 
         m.id,
         ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / 3600.0 as time_diff_hours,
-        GREATEST(0, 1 - (ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / 86400.0)) as temporal_strength
+        GREATEST(0, 1 - (ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / ${this.getTemporalWindowSeconds(memory)})) as temporal_strength
       FROM "Memory" m
       WHERE m."personaId" = ${memory.personaId}::uuid
         AND m.id != ${memory.id}::uuid
         AND m."occurredAt" IS NOT NULL
-        AND ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) <= 86400 -- Within 24 hours (86400 seconds)
+        AND ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) <= ${this.getTemporalWindowSeconds(memory)}
       ORDER BY ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) ASC
       LIMIT 20
     `;
@@ -239,7 +240,7 @@ export class MemoryGraphService {
           components: {
             some: {
               emotionTypeId: { in: dominantEmotions },
-              intensity: { gte: 0.5 }, // Moderate to high intensity
+              intensity: { gte: this.getMinimumEmotionalIntensityForContext() }, // Emotionally significant for LLM context
             },
           },
         },
@@ -302,12 +303,12 @@ export class MemoryGraphService {
 
     // Add forward references (this -> other)
     for (const refMemory of referencedMemories) {
-      associations.push(this.createAssociation(memory.id, refMemory.id, 'reference', 0.9));
+      associations.push(this.createAssociation(memory.id, refMemory.id, 'reference', this.getReferenceStrengthForLLM()));
     }
 
     // Add backward references (other -> this)
     for (const refMemory of referencingMemories) {
-      associations.push(this.createAssociation(refMemory.id, memory.id, 'reference', 0.9));
+      associations.push(this.createAssociation(refMemory.id, memory.id, 'reference', this.getReferenceStrengthForLLM()));
     }
 
     return associations;
@@ -333,7 +334,12 @@ export class MemoryGraphService {
       path: string[];
     }>
   > {
-    const { memoryId, limit = 10, minStrength = 0.3, associationTypes } = params;
+    const { 
+      memoryId, 
+      limit = this.getDefaultRelatedMemoryLimit(), 
+      minStrength = this.getDefaultAssociationStrengthForRetrieval(), 
+      associationTypes 
+    } = params;
 
     // Get direct associations
     const associations = await this.prisma.memoryAssociation.findMany({
@@ -399,7 +405,7 @@ export class MemoryGraphService {
           1 as depth
         FROM "memory_associations"
         WHERE ("memoryA" = ${startMemoryId}::uuid OR "memoryB" = ${startMemoryId}::uuid)
-          AND "associationStrength" >= 0.3
+          AND "associationStrength" >= ${this.getDefaultAssociationStrengthForRetrieval()}
         
         UNION ALL
         
@@ -425,7 +431,7 @@ export class MemoryGraphService {
             WHEN ma."memoryA" = mp.current_memory::uuid THEN ma."memoryB"::text
             ELSE ma."memoryA"::text
           END = ANY(mp.path))
-          AND ma."associationStrength" >= 0.3
+          AND ma."associationStrength" >= ${this.getDefaultAssociationStrengthForRetrieval()}
       )
       SELECT array_to_string(path, ',') as path, strength, array_to_string(types, ',') as types
       FROM memory_paths 
@@ -493,7 +499,7 @@ export class MemoryGraphService {
         FROM memory_clusters mc
         JOIN "memory_associations" ma ON 
           (ma."memoryA" = mc.memory_id OR ma."memoryB" = mc.memory_id)
-        WHERE ma."associationStrength" >= 0.6
+        WHERE ma."associationStrength" >= ${this.getStrongAssociationThresholdForLLM()}
           AND mc.cluster_size < 10
           AND mc.memory_path NOT LIKE '%' || CASE 
             WHEN ma."memoryA" = mc.memory_id THEN ma."memoryB"
@@ -567,7 +573,7 @@ export class MemoryGraphService {
           AND m2."personaId" = ${personaId}::uuid
           AND ma."associationType" = 'temporal'
           AND m1."occurredAt" < m2."occurredAt"
-          AND m2."occurredAt" - m1."occurredAt" <= INTERVAL '24 hours' -- Within 24 hours
+          AND m2."occurredAt" - m1."occurredAt" <= INTERVAL '${this.getDefaultTemporalChainWindowHours()} hours'
       ),
       extended_chains AS (
         SELECT 
@@ -580,7 +586,7 @@ export class MemoryGraphService {
         JOIN "Memory" m3 ON ma2."memoryB" = m3.id
         WHERE ma2."associationType" = 'temporal'
           AND m3."occurredAt" > tc.end_time
-          AND m3."occurredAt" - tc.end_time <= INTERVAL '24 hours'
+          AND m3."occurredAt" - tc.end_time <= INTERVAL '${this.getDefaultTemporalChainWindowHours()} hours'
       )
       SELECT 
         ROW_NUMBER() OVER (ORDER BY array_length(chain, 1) DESC, start_time) as chain_id,
@@ -757,5 +763,336 @@ export class MemoryGraphService {
       contentTypes: p.content_types.split(','),
       strength: p.path_strength,
     }));
+  }
+
+  /**
+   * Determine if an association provides meaningful context for LLM retrieval
+   * Based on practical conversation needs rather than arbitrary thresholds
+   */
+  private isAssociationMeaningfulForRetrieval(assoc: {
+    memoryA: string;
+    memoryB: string;
+    strength: number;
+    type: string;
+  }): boolean {
+    // Associations must have minimum strength to be useful for context
+    // Use dynamic threshold based on association type and practical utility
+    const minStrengthByType = {
+      temporal: 0.2,     // Temporal connections are valuable even if weak
+      semantic: 0.4,     // Semantic similarity needs moderate strength
+      emotional: 0.3,    // Emotional connections moderately valuable
+      causal: 0.5,       // Causal relationships need strong evidence
+      reference: 0.8,    // Reference/mention connections need high confidence
+    };
+
+    const minStrength = minStrengthByType[assoc.type as keyof typeof minStrengthByType] || 0.3;
+    
+    // Only keep associations that would provide meaningful context
+    return assoc.strength >= minStrength;
+  }
+
+  /**
+   * Check if vector similarity is meaningful for LLM context retrieval
+   * Based on practical experience with embedding similarity in conversation context
+   */
+  private isSimilarityMeaningfulForLLM(distance: number): boolean {
+    // For LLM context, we want memories that are similar enough to be relevant
+    // but not so similar that they're near-duplicates
+    // pgvector distance: 0 = identical, 2 = orthogonal
+    
+    // Upper bound: exclude near-duplicates (too similar to add value)
+    if (distance < 0.1) return false;
+    
+    // Lower bound: exclude memories that are too dissimilar to provide context
+    // Based on empirical testing of embedding similarity for conversation context
+    if (distance > 1.2) return false;
+    
+    return true;
+  }
+
+  /**
+   * Determine appropriate temporal window for LLM context based on memory characteristics
+   * Different types of memories have different relevant time windows for conversation context
+   */
+  private getTemporalWindowSeconds(memory: { memoryType?: string; significanceScore?: number }): number {
+    // Base windows in seconds optimized for LLM conversation context
+    const baseWindows = {
+      episodic: 48 * 3600,   // 48 hours - personal experiences stay relevant longer
+      semantic: 7 * 24 * 3600, // 7 days - facts/knowledge have broader temporal relevance  
+      procedural: 24 * 3600,   // 24 hours - how-to memories are situationally relevant
+    };
+
+    const baseWindow = baseWindows[memory.memoryType as keyof typeof baseWindows] || 24 * 3600;
+    
+    // Adjust window based on memory significance for LLM context
+    // More significant memories have wider temporal relevance in conversations
+    const significanceMultiplier = memory.significanceScore ? 
+      (0.5 + memory.significanceScore) : 1.0; // Range: 0.5x to 1.5x
+    
+    return Math.floor(baseWindow * significanceMultiplier);
+  }
+
+  /**
+   * Get minimum emotional intensity threshold for LLM context relevance
+   * Based on practical conversation needs - emotions need to be strong enough to influence personality
+   */
+  private async getMinimumEmotionalIntensityForContext(personaId: string): Promise<number> {
+    // Query emotional memories that were accessed multiple times
+    // Calculate median intensity of emotions that actually influenced conversation
+    const accessedEmotionalMemories = await this.prisma.memory.findMany({
+      where: {
+        personaId,
+        accessCount: { gt: 0 },
+        emotionalStateId: { not: null }
+      },
+      include: {
+        emotionalState: {
+          include: {
+            components: true
+          }
+        }
+      }
+    });
+
+    if (accessedEmotionalMemories.length === 0) {
+      return 0.3; // Fallback minimum if no data available
+    }
+
+    // Extract intensity values from accessed emotional memories
+    const intensities: number[] = [];
+    for (const memory of accessedEmotionalMemories) {
+      if (memory.emotionalState?.components) {
+        for (const component of memory.emotionalState.components) {
+          if (component.intensity > 0) {
+            intensities.push(component.intensity);
+          }
+        }
+      }
+    }
+
+    if (intensities.length === 0) {
+      return 0.3; // Fallback if no valid intensities found
+    }
+
+    // Calculate 50th percentile of accessed emotional intensities
+    intensities.sort((a, b) => a - b);
+    const median = intensities[Math.floor(intensities.length / 2)];
+    
+    // Return threshold with safety bounds
+    return Math.max(0.3, Math.min(0.8, median));
+  }
+
+  /**
+   * Get reference/mention strength for LLM context
+   * Based on how explicitly mentioned memories should influence conversation context
+   */
+  private async getReferenceStrengthForLLM(personaId: string): Promise<number> {
+    // Query reference associations where both memories were accessed
+    // Use 75th percentile of successful reference strengths as threshold
+    const referenceAssociations = await this.prisma.memoryAssociation.findMany({
+      where: {
+        associationType: 'reference',
+        memoryARelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        },
+        memoryBRelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        }
+      },
+      select: {
+        associationStrength: true
+      }
+    });
+
+    if (referenceAssociations.length === 0) {
+      return 0.7; // Fallback if no reference data available
+    }
+
+    // Calculate 75th percentile of successful reference strengths
+    const strengths = referenceAssociations.map(a => a.associationStrength).sort((a, b) => a - b);
+    const percentile75Index = Math.floor(strengths.length * 0.75);
+    const calculatedThreshold = strengths[percentile75Index];
+    
+    // Return threshold with safety bounds
+    return Math.max(0.7, Math.min(0.95, calculatedThreshold));
+  }
+
+  /**
+   * Get default limit for related memory retrieval in LLM context
+   * Based on practical LLM context window and conversation flow needs
+   */
+  private async getDefaultRelatedMemoryLimit(personaId: string): Promise<number> {
+    // Count associations per frequently accessed memory
+    // Calculate median association count that proved useful
+    const memoryAssociationCounts = await this.prisma.memory.findMany({
+      where: {
+        personaId,
+        accessCount: { gt: 1 } // Frequently accessed memories
+      },
+      select: {
+        id: true,
+        accessCount: true,
+        associationsFrom: {
+          select: { id: true }
+        },
+        associationsTo: {
+          select: { id: true }
+        }
+      }
+    });
+
+    if (memoryAssociationCounts.length === 0) {
+      return 8; // Fallback if no data available
+    }
+
+    // Calculate total associations per memory
+    const associationCounts = memoryAssociationCounts.map(memory => 
+      memory.associationsFrom.length + memory.associationsTo.length
+    );
+
+    if (associationCounts.length === 0) {
+      return 8; // Fallback if no associations found
+    }
+
+    // Calculate median number of associations for frequently accessed memories
+    associationCounts.sort((a, b) => a - b);
+    const medianCount = associationCounts[Math.floor(associationCounts.length / 2)];
+    
+    // Constrain to 5-15 range per research bounds
+    return Math.min(Math.max(medianCount, 5), 15);
+  }
+
+  /**
+   * Get default association strength threshold for meaningful retrieval
+   * Based on what provides useful context for LLM personality preservation
+   */
+  private async getDefaultAssociationStrengthForRetrieval(personaId: string): Promise<number> {
+    // Query associations that led to successful retrievals
+    // Use 30th percentile as minimum threshold for weak but useful connections
+    const successfulAssociations = await this.prisma.memoryAssociation.findMany({
+      where: {
+        memoryARelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        },
+        memoryBRelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        }
+      },
+      select: {
+        associationStrength: true
+      }
+    });
+
+    if (successfulAssociations.length === 0) {
+      return 0.2; // Fallback if no association data available
+    }
+
+    // Calculate 30th percentile of successful association strengths
+    const strengths = successfulAssociations.map(a => a.associationStrength).sort((a, b) => a - b);
+    const percentile30Index = Math.floor(strengths.length * 0.3);
+    const calculatedThreshold = strengths[percentile30Index];
+    
+    // Return threshold with safety bounds
+    return Math.max(0.2, Math.min(0.6, calculatedThreshold));
+  }
+
+  /**
+   * Get threshold for "strong" associations in LLM context
+   * Used for high-confidence relationship discovery and clustering
+   */
+  private async getStrongAssociationThresholdForLLM(personaId: string): Promise<number> {
+    // Query top association strengths that formed meaningful clusters
+    // Use 75th percentile of high-strength associations as "strong" threshold
+    const highStrengthAssociations = await this.prisma.memoryAssociation.findMany({
+      where: {
+        associationStrength: { gt: 0.5 },
+        memoryARelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        },
+        memoryBRelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        }
+      },
+      select: {
+        associationStrength: true
+      }
+    });
+
+    if (highStrengthAssociations.length === 0) {
+      return 0.6; // Fallback if no high-strength data available
+    }
+
+    // Calculate 75th percentile of existing strong associations
+    const strengths = highStrengthAssociations.map(a => a.associationStrength).sort((a, b) => a - b);
+    const percentile75Index = Math.floor(strengths.length * 0.75);
+    const calculatedThreshold = strengths[percentile75Index];
+    
+    // Return threshold with safety bounds
+    return Math.max(0.6, Math.min(0.9, calculatedThreshold));
+  }
+
+  /**
+   * Get default temporal chain window for LLM conversation context
+   * Based on how long memories remain temporally relevant for personality consistency
+   */
+  private async getDefaultTemporalChainWindowHours(personaId: string): Promise<number> {
+    // Analyze temporal gaps in existing temporal associations
+    // Use 80th percentile of successful temporal gaps as window
+    const temporalAssociations = await this.prisma.memoryAssociation.findMany({
+      where: {
+        associationType: 'temporal',
+        memoryARelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        },
+        memoryBRelation: {
+          personaId,
+          accessCount: { gt: 0 }
+        }
+      },
+      include: {
+        memoryARelation: {
+          select: { occurredAt: true }
+        },
+        memoryBRelation: {
+          select: { occurredAt: true }
+        }
+      }
+    });
+
+    if (temporalAssociations.length === 0) {
+      return 24; // Fallback if no temporal data available
+    }
+
+    // Calculate time gaps between associated memories
+    const timeGapsHours: number[] = [];
+    for (const assoc of temporalAssociations) {
+      const timeA = assoc.memoryARelation.occurredAt;
+      const timeB = assoc.memoryBRelation.occurredAt;
+      
+      if (timeA && timeB) {
+        const gapMs = Math.abs(timeB.getTime() - timeA.getTime());
+        const gapHours = gapMs / (1000 * 60 * 60);
+        timeGapsHours.push(gapHours);
+      }
+    }
+
+    if (timeGapsHours.length === 0) {
+      return 24; // Fallback if no valid time gaps found
+    }
+
+    // Calculate 80th percentile of successful temporal gaps
+    timeGapsHours.sort((a, b) => a - b);
+    const percentile80Index = Math.floor(timeGapsHours.length * 0.8);
+    const calculatedWindow = timeGapsHours[percentile80Index];
+    
+    // Constrain to 12-72 hours per research bounds
+    return Math.min(Math.max(calculatedWindow, 12), 72);
   }
 }

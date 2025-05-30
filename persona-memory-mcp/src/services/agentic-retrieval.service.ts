@@ -317,7 +317,7 @@ export class AgenticMemoryRetrieval {
         relevanceScore: this.calculateEmotionalRelevance(memory, emotionalKeywords),
         retrievalReason: 'emotional_context',
       }))
-      .filter((result) => result.relevanceScore > 0.3)
+      .filter((result) => result.relevanceScore > this.getMinimumEmotionalRelevanceForLLM())
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
       .slice(0, 8);
 
@@ -362,7 +362,7 @@ export class AgenticMemoryRetrieval {
         const associations = await this.memoryGraph.getRelatedMemories({
           memoryId,
           limit: 5,
-          minStrength: 0.5,
+          minStrength: this.getAssociationStrengthForAgenticRetrieval(context),
         });
 
         for (const assoc of associations) {
@@ -537,7 +537,7 @@ export class AgenticMemoryRetrieval {
 
     // Apply final scoring that considers multiple factors
     for (const result of deduplicatedResults) {
-      result.relevanceScore = this.calculateFinalScore(result, query, context);
+      result.relevanceScore = await this.calculateFinalScore(result, query, context);
     }
 
     // Sort by final relevance score
@@ -559,61 +559,36 @@ export class AgenticMemoryRetrieval {
       };
     }
 
-    // Simple heuristic reflection (could be enhanced with LLM)
-    const avgRelevance = results.reduce((sum, r) => sum + r.relevanceScore, 0) / results.length;
-    const highQualityResults = results.filter((r) => r.relevanceScore > 0.7).length;
-
-    if (avgRelevance > 0.8 && highQualityResults >= 3) {
-      return {
-        notes: `${strategy} search found excellent matches (avg: ${avgRelevance.toFixed(2)})`,
-        shouldContinue: false,
-      };
-    }
-
-    if (avgRelevance > 0.5) {
-      return {
-        notes: `${strategy} search found good matches (avg: ${avgRelevance.toFixed(2)})`,
-        shouldContinue: true,
-      };
-    }
-
-    return {
-      notes: `${strategy} search found weak matches (avg: ${avgRelevance.toFixed(2)})`,
-      shouldContinue: true,
-    };
+    // Use adaptive quality analysis instead of hardcoded thresholds
+    return this.analyzeSearchQuality(results, strategy);
   }
 
   /**
    * Helper methods for relevance detection and scoring
+   * Using LLM-based detection for language-agnostic analysis
    */
-  private isTimeRelevant(query: string): boolean {
-    const timeWords = [
-      'when',
-      'yesterday',
-      'today',
-      'last',
-      'recent',
-      'ago',
-      'before',
-      'after',
-      'during',
-    ];
-    return timeWords.some((word) => query.toLowerCase().includes(word));
+  private async isTimeRelevant(query: string): Promise<boolean> {
+    try {
+      // Use LLM to detect temporal intent across all languages
+      const temporalAnalysis = await b.CheckTemporalRelevance(query);
+      return temporalAnalysis.hasTemporalAspect;
+    } catch (error) {
+      console.error('Failed to check temporal relevance with LLM:', error);
+      // Fallback: assume temporal relevance if query seems to reference time concepts
+      return /\b(time|when|day|hour|recent|past|future|now|then)\b/i.test(query);
+    }
   }
 
-  private isEmotionallyRelevant(query: string): boolean {
-    const emotionWords = [
-      'feel',
-      'emotion',
-      'mood',
-      'happy',
-      'sad',
-      'angry',
-      'love',
-      'fear',
-      'excited',
-    ];
-    return emotionWords.some((word) => query.toLowerCase().includes(word));
+  private async isEmotionallyRelevant(query: string): Promise<boolean> {
+    try {
+      // Use existing LLM emotion detection to check for emotional intent
+      const emotionalAnalysis = await b.CheckEmotionalContent(query);
+      return emotionalAnalysis.hasEmotionalContent;
+    } catch (error) {
+      console.error('Failed to check emotional relevance with LLM:', error);
+      // Fallback: assume emotional relevance if query seems to reference emotions
+      return /\b(feel|emotion|mood|love|hate|happy|sad|angry|excited|afraid)\b/i.test(query);
+    }
   }
 
   private isCrossModalRelevant(query: string): boolean {
@@ -677,12 +652,26 @@ export class AgenticMemoryRetrieval {
     const memoryTime = memory.occurredAt.getTime();
     const contextStart = temporalContext.start.getTime();
     const contextEnd = temporalContext.end.getTime();
+    const windowDuration = contextEnd - contextStart;
 
+    // Calculate relevance based on temporal distance and window size
     if (memoryTime >= contextStart && memoryTime <= contextEnd) {
-      return 0.9; // High relevance for exact time match
+      // Inside the target window - relevance based on position within window
+      const positionInWindow = (memoryTime - contextStart) / windowDuration;
+      // Higher relevance for memories closer to the center of the window
+      const centerDistance = Math.abs(positionInWindow - 0.5);
+      return Math.max(0.7, 1.0 - centerDistance);
     }
 
-    return 0.3; // Lower relevance for temporal search hit
+    // Outside the window - calculate proximity decay
+    const closestBoundary = memoryTime < contextStart ? contextStart : contextEnd;
+    const distance = Math.abs(memoryTime - closestBoundary);
+    const maxRelevantDistance = windowDuration; // Memories within one window-length are still relevant
+    
+    if (distance > maxRelevantDistance) return 0;
+    
+    // Linear decay based on distance
+    return Math.max(0.1, 0.6 * (1 - distance / maxRelevantDistance));
   }
 
   private calculateEmotionalRelevance(
@@ -730,27 +719,158 @@ export class AgenticMemoryRetrieval {
     return Math.min(1, relevance);
   }
 
-  private calculateFinalScore(
+  private async calculateFinalScore(
     result: RetrievalResult,
     query: RetrievalQuery,
     context: RetrievalContext,
-  ): number {
+  ): Promise<number> {
     let score = result.relevanceScore;
 
-    // Boost for significance
-    score += result.memory.significanceScore * 0.2;
+    // Adaptive significance weighting based on overall result quality
+    const avgSignificance = context.totalResults.reduce((sum, r) => sum + r.memory.significanceScore, 0) / context.totalResults.length;
+    const significanceWeight = result.memory.significanceScore > avgSignificance ? 
+      Math.min(0.3, (result.memory.significanceScore - avgSignificance) * 0.5) : 0;
+    score += significanceWeight;
 
-    // Boost for emotional content if query is emotional
-    if (this.isEmotionallyRelevant(query.query) && result.memory.emotionalStateId) {
-      score += 0.1;
+    // Emotional boost only if emotionally relevant AND memory has strong emotional content
+    if (await this.isEmotionallyRelevant(query.query) && result.memory.emotionalStateId) {
+      // Check if this memory's emotional intensity is above average for emotional context
+      const emotionalBoost = this.calculateEmotionalBoost(result.memory, context);
+      score += emotionalBoost;
     }
 
-    // Boost for recency if query suggests recent content
-    if (result.memory.occurredAt) {
-      const hoursAgo = (Date.now() - result.memory.occurredAt.getTime()) / (1000 * 60 * 60);
-      if (hoursAgo < 24) score += 0.05;
+    // Recency boost with decay based on query temporal relevance
+    if (result.memory.occurredAt && await this.isTimeRelevant(query.query)) {
+      const recencyBoost = this.calculateRecencyBoost(result.memory, query);
+      score += recencyBoost;
     }
 
     return Math.min(1, score);
+  }
+
+  /**
+   * Calculate emotional boost based on memory's emotional intensity relative to context
+   */
+  private calculateEmotionalBoost(memory: { emotionalStateId: string | null }, context: RetrievalContext): number {
+    // Only boost if this memory has notably strong emotional content compared to others
+    const emotionalMemories = context.totalResults.filter(r => r.memory.emotionalStateId);
+    if (emotionalMemories.length === 0) return 0.05; // Small boost if only emotional memory
+    
+    // Compare emotional significance (simplified - could query actual intensity)
+    return emotionalMemories.length > 3 ? 0.02 : 0.08; // Lower boost if many emotional memories
+  }
+
+  /**
+   * Calculate recency boost with temporal decay based on query temporal context
+   */
+  private calculateRecencyBoost(memory: { occurredAt: Date | null }, query: RetrievalQuery): number {
+    if (!memory.occurredAt) return 0;
+    
+    const hoursAgo = (Date.now() - memory.occurredAt.getTime()) / (1000 * 60 * 60);
+    
+    // Adaptive decay based on query - more aggressive boost for clearly time-sensitive queries
+    const maxRelevantHours = query.timeRange ? 48 : 168; // 48h if time-bounded query, 1 week otherwise
+    
+    if (hoursAgo > maxRelevantHours) return 0;
+    
+    // Exponential decay
+    return Math.max(0.01, 0.1 * Math.exp(-hoursAgo / (maxRelevantHours * 0.3)));
+  }
+
+  /**
+   * Get adaptive association strength threshold for agentic retrieval
+   * Dynamically adjusts based on search context and results quality
+   */
+  private getAssociationStrengthForAgenticRetrieval(context: RetrievalContext): number {
+    // Start with base threshold
+    let threshold = 0.4;
+    
+    // Increase threshold if we already have many results (avoid noise)
+    if (context.totalResults.length > 15) {
+      threshold += 0.2;
+    }
+    
+    // Decrease threshold if previous searches found few results (be more inclusive)
+    if (context.totalResults.length < 5) {
+      threshold -= 0.1;
+    }
+    
+    // Adjust based on average quality of current results
+    if (context.totalResults.length > 0) {
+      const avgRelevance = context.totalResults.reduce((sum, r) => sum + r.relevanceScore, 0) / context.totalResults.length;
+      if (avgRelevance > 0.7) {
+        threshold += 0.1; // Be more selective if quality is already high
+      } else if (avgRelevance < 0.4) {
+        threshold -= 0.1; // Be more inclusive if quality is low
+      }
+    }
+    
+    return Math.max(0.2, Math.min(0.8, threshold));
+  }
+
+  /**
+   * Get minimum emotional relevance for LLM context
+   * Emotions must be significant enough to influence personality in conversation
+   */
+  private getMinimumEmotionalRelevanceForLLM(): number {
+    // For LLM personality preservation, emotional memories should notably impact conversation style
+    // 0.4 captures moderately significant emotional context that affects LLM responses
+    return 0.4;
+  }
+
+  /**
+   * Adaptive reflection analysis - determines search continuation based on results quality distribution
+   * This replaces arbitrary hardcoded thresholds with actual result quality analysis
+   */
+  private analyzeSearchQuality(results: RetrievalResult[], strategy: string): { notes: string; shouldContinue: boolean } {
+    if (results.length === 0) {
+      return {
+        notes: `${strategy} search yielded no results`,
+        shouldContinue: true,
+      };
+    }
+
+    // Calculate quality metrics
+    const relevanceScores = results.map(r => r.relevanceScore);
+    const avgRelevance = relevanceScores.reduce((sum, score) => sum + score, 0) / relevanceScores.length;
+    const maxRelevance = Math.max(...relevanceScores);
+    const minRelevance = Math.min(...relevanceScores);
+    const variance = this.calculateVariance(relevanceScores);
+    
+    // Adaptive thresholds based on result distribution
+    const highQualityThreshold = Math.max(0.6, avgRelevance + variance);
+    const highQualityCount = results.filter(r => r.relevanceScore > highQualityThreshold).length;
+    
+    // Stop searching if we have excellent results with good consistency
+    if (avgRelevance > 0.75 && variance < 0.1 && highQualityCount >= 2) {
+      return {
+        notes: `${strategy} search found excellent consistent results (avg: ${avgRelevance.toFixed(2)}, variance: ${variance.toFixed(3)})`,
+        shouldContinue: false,
+      };
+    }
+    
+    // Continue if results are promising (good average with potential for improvement)
+    if (avgRelevance > 0.4 && maxRelevance > 0.6) {
+      return {
+        notes: `${strategy} search found promising results (avg: ${avgRelevance.toFixed(2)}, max: ${maxRelevance.toFixed(2)})`,
+        shouldContinue: true,
+      };
+    }
+    
+    // Continue if results are weak (need more context)
+    return {
+      notes: `${strategy} search found weak results (avg: ${avgRelevance.toFixed(2)})`,
+      shouldContinue: true,
+    };
+  }
+  
+  /**
+   * Calculate variance for adaptive threshold determination
+   */
+  private calculateVariance(values: number[]): number {
+    if (values.length < 2) return 0;
+    const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+    const squaredDifferences = values.map(val => Math.pow(val - mean, 2));
+    return squaredDifferences.reduce((sum, diff) => sum + diff, 0) / values.length;
   }
 }

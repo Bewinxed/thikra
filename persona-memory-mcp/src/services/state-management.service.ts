@@ -326,20 +326,101 @@ export class StateManagementService {
   }
 
   /**
-   * Delete old state history to manage storage
+   * Delete old state history to manage storage using intelligent retention logic
+   * Retention period determined by state importance and access patterns
    */
-  async cleanupOldStates(personaId: string, keepDays = 90): Promise<number> {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - keepDays);
+  async cleanupOldStates(personaId: string): Promise<number> {
+    // Get all states to analyze retention needs
+    const allStates = await this.prisma.personaState.findMany({
+      where: { personaId },
+      orderBy: { lastUpdated: 'desc' },
+    });
+
+    if (allStates.length === 0) return 0;
+
+    // Calculate intelligent retention periods based on state characteristics
+    const statesToDelete: string[] = [];
+    const now = new Date();
+
+    for (const state of allStates) {
+      const daysSinceUpdate = (now.getTime() - state.lastUpdated.getTime()) / (1000 * 60 * 60 * 24);
+      const retentionDays = this.calculateStateRetentionDays(state, allStates);
+      
+      if (daysSinceUpdate > retentionDays) {
+        statesToDelete.push(state.id);
+      }
+    }
+
+    if (statesToDelete.length === 0) return 0;
 
     const result = await this.prisma.personaState.deleteMany({
       where: {
-        personaId,
-        lastUpdated: { lt: cutoffDate },
+        id: { in: statesToDelete },
       },
     });
 
     return result.count;
+  }
+
+  /**
+   * Calculate intelligent retention period for a state based on its characteristics
+   * Source: Dynamic retention based on state significance, uniqueness, and access patterns
+   */
+  private calculateStateRetentionDays(state: PersonaState, allStates: PersonaState[]): number {
+    let baseDays = 30; // Base retention period
+
+    // Factor 1: State importance based on value complexity
+    const valueComplexity = this.calculateValueComplexity(state.stateValue);
+    if (valueComplexity > 5) baseDays += 30; // Complex states kept longer
+
+    // Factor 2: State uniqueness - rare states kept longer
+    const similarStates = allStates.filter(s => 
+      s.stateKey === state.stateKey && s.id !== state.id
+    ).length;
+    if (similarStates < 3) baseDays += 60; // Unique states kept much longer
+
+    // Factor 3: Recent access patterns
+    const daysSinceAccessed = (Date.now() - state.lastUpdated.getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceAccessed < 7) baseDays += 45; // Recently accessed states kept longer
+
+    // Factor 4: State type importance
+    if (state.stateKey.includes('personality') || state.stateKey.includes('identity')) {
+      baseDays += 90; // Personality-related states kept much longer
+    }
+    if (state.stateKey.includes('temp') || state.stateKey.includes('cache')) {
+      baseDays = Math.min(baseDays, 14); // Temporary states cleaned up faster
+    }
+
+    // Factor 5: Storage efficiency - cap retention for common states
+    if (similarStates > 10) {
+      baseDays = Math.min(baseDays, 45); // Don't hoard too many similar states
+    }
+
+    return Math.max(7, Math.min(365, baseDays)); // Range: 1 week to 1 year
+  }
+
+  /**
+   * Calculate complexity score for a state value
+   */
+  private calculateValueComplexity(value: unknown): number {
+    if (value === null || value === undefined) return 0;
+    
+    let complexity = 0;
+    
+    if (typeof value === 'object' && value !== null) {
+      if (Array.isArray(value)) {
+        complexity = value.length + value.reduce((sum, item) => sum + this.calculateValueComplexity(item), 0);
+      } else {
+        const keys = Object.keys(value);
+        complexity = keys.length + keys.reduce((sum, key) => sum + this.calculateValueComplexity((value as Record<string, unknown>)[key]), 0);
+      }
+    } else if (typeof value === 'string') {
+      complexity = Math.min(10, value.length / 10); // String length contributes to complexity
+    } else {
+      complexity = 1; // Primitive values have base complexity
+    }
+    
+    return complexity;
   }
 
   /**

@@ -220,3 +220,32 @@ function CalculateEntityRelevance(entityInfo: string, query: string) -> EntityRe
     {{ ctx.output_format }}
   "#
 }
+
+class ReinforcementBoost {
+  boostAmount float @description("0.0 to 1.0, how much to boost memory strength")
+  reasoning string @description("Explanation of the boost calculation")
+  confidence float @description("0.0 to 1.0, confidence in this assessment")
+}
+
+function CalculateReinforcementBoost(memoryContext: string) -> ReinforcementBoost {
+  client OpenRouterGPT4oMini
+  
+  prompt #"
+    Calculate how much to boost a memory's strength based on reinforcement from related memories.
+    
+    Consider:
+    - Memory significance and importance
+    - Age and previous strength of the memory
+    - Type of memory (episodic memories often get stronger reinforcement)
+    - Emotional significance and personal relevance
+    - Previous reinforcement history
+    - Context and relationship strength
+    
+    Memory Context: {{ memoryContext }}
+    
+    Calculate a boost amount based on memory consolidation research and psychological principles.
+    Higher significance, emotional content, and recent memories typically receive larger boosts.
+    
+    {{ ctx.output_format }}
+  "#
+}
