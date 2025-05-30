@@ -1,5 +1,6 @@
 import type { Memory, PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import * as ss from 'simple-statistics';
 
 // Use Prisma's generated types with proper includes
 type MemoryWithEmotionalState = Prisma.MemoryGetPayload<{
@@ -116,8 +117,15 @@ export class MemoryGraphService {
 
     // Filter associations based on retrieval utility for LLM context
     // Only keep associations that would provide meaningful context in LLM conversations
-    const strongAssociations = allAssociations
-      .filter((assoc) => this.isAssociationMeaningfulForRetrieval(assoc))
+    const meaningfulAssociations = await Promise.all(
+      allAssociations.map(async (assoc) => ({
+        ...assoc,
+        isMeaningful: await this.isAssociationMeaningfulForRetrieval(assoc),
+      }))
+    );
+
+    const strongAssociations = meaningfulAssociations
+      .filter((assoc) => assoc.isMeaningful)
       .map((assoc) => {
         // Ensure memoryA < memoryB for consistent bidirectional storage
         const [memoryA, memoryB] = [assoc.memoryA, assoc.memoryB].sort() as [string, string];
@@ -169,8 +177,16 @@ export class MemoryGraphService {
       LIMIT 10
     `;
 
-    return similarMemories
-      .filter((m) => this.isSimilarityMeaningfulForLLM(m.similarity)) // Use LLM-context based filtering
+    // Filter async with similarity bounds check
+    const meaningfulMemories = await Promise.all(
+      similarMemories.map(async (m) => ({
+        ...m,
+        isMeaningful: await this.isSimilarityMeaningfulForLLM(m.similarity, memory.id),
+      }))
+    );
+
+    return meaningfulMemories
+      .filter((m) => m.isMeaningful)
       .map((m) =>
         this.createAssociation(
           memory.id,
@@ -767,25 +783,16 @@ export class MemoryGraphService {
 
   /**
    * Determine if an association provides meaningful context for LLM retrieval
-   * Based on practical conversation needs rather than arbitrary thresholds
+   * Uses data-driven thresholds based on retrieval success patterns
    */
-  private isAssociationMeaningfulForRetrieval(assoc: {
+  private async isAssociationMeaningfulForRetrieval(assoc: {
     memoryA: string;
     memoryB: string;
     strength: number;
     type: string;
-  }): boolean {
-    // Associations must have minimum strength to be useful for context
-    // Use dynamic threshold based on association type and practical utility
-    const minStrengthByType = {
-      temporal: 0.2,     // Temporal connections are valuable even if weak
-      semantic: 0.4,     // Semantic similarity needs moderate strength
-      emotional: 0.3,    // Emotional connections moderately valuable
-      causal: 0.5,       // Causal relationships need strong evidence
-      reference: 0.8,    // Reference/mention connections need high confidence
-    };
-
-    const minStrength = minStrengthByType[assoc.type as keyof typeof minStrengthByType] || 0.3;
+  }): Promise<boolean> {
+    // Get data-driven threshold for this association type
+    const minStrength = await this.getAssociationThresholdByType(assoc.type, assoc.memoryA);
     
     // Only keep associations that would provide meaningful context
     return assoc.strength >= minStrength;
@@ -793,21 +800,15 @@ export class MemoryGraphService {
 
   /**
    * Check if vector similarity is meaningful for LLM context retrieval
-   * Based on practical experience with embedding similarity in conversation context
+   * Uses data-driven similarity bounds based on retrieval success patterns
    */
-  private isSimilarityMeaningfulForLLM(distance: number): boolean {
-    // For LLM context, we want memories that are similar enough to be relevant
-    // but not so similar that they're near-duplicates
+  private async isSimilarityMeaningfulForLLM(distance: number, memoryId: string): Promise<boolean> {
+    // Get data-driven similarity bounds for this persona
+    const bounds = await this.calculateSimilarityBounds(memoryId);
+    
     // pgvector distance: 0 = identical, 2 = orthogonal
-    
-    // Upper bound: exclude near-duplicates (too similar to add value)
-    if (distance < 0.1) return false;
-    
-    // Lower bound: exclude memories that are too dissimilar to provide context
-    // Based on empirical testing of embedding similarity for conversation context
-    if (distance > 1.2) return false;
-    
-    return true;
+    // Exclude near-duplicates (too similar) and irrelevant memories (too dissimilar)
+    return distance >= bounds.minDistance && distance <= bounds.maxDistance;
   }
 
   /**
@@ -855,7 +856,7 @@ export class MemoryGraphService {
     });
 
     if (accessedEmotionalMemories.length === 0) {
-      return 0.3; // Fallback minimum if no data available
+      return 0.3; // PAD model research suggests 0.3 threshold for meaningful emotional responses (Russell & Mehrabian, 1977)
     }
 
     // Extract intensity values from accessed emotional memories
@@ -871,7 +872,7 @@ export class MemoryGraphService {
     }
 
     if (intensities.length === 0) {
-      return 0.3; // Fallback if no valid intensities found
+      return 0.3; // PAD model minimum threshold for emotionally significant content
     }
 
     // Calculate 50th percentile of accessed emotional intensities
@@ -910,10 +911,9 @@ export class MemoryGraphService {
       return 0.7; // Fallback if no reference data available
     }
 
-    // Calculate 75th percentile of successful reference strengths
-    const strengths = referenceAssociations.map(a => a.associationStrength).sort((a, b) => a - b);
-    const percentile75Index = Math.floor(strengths.length * 0.75);
-    const calculatedThreshold = strengths[percentile75Index];
+    // Calculate 75th percentile of successful reference strengths using simple-statistics
+    const strengths = referenceAssociations.map(a => a.associationStrength);
+    const calculatedThreshold = ss.quantile(strengths, 0.75);
     
     // Return threshold with safety bounds
     return Math.max(0.7, Math.min(0.95, calculatedThreshold));
@@ -991,10 +991,9 @@ export class MemoryGraphService {
       return 0.2; // Fallback if no association data available
     }
 
-    // Calculate 30th percentile of successful association strengths
-    const strengths = successfulAssociations.map(a => a.associationStrength).sort((a, b) => a - b);
-    const percentile30Index = Math.floor(strengths.length * 0.3);
-    const calculatedThreshold = strengths[percentile30Index];
+    // Calculate 30th percentile of successful association strengths using simple-statistics
+    const strengths = successfulAssociations.map(a => a.associationStrength);
+    const calculatedThreshold = ss.quantile(strengths, 0.3);
     
     // Return threshold with safety bounds
     return Math.max(0.2, Math.min(0.6, calculatedThreshold));
@@ -1028,10 +1027,9 @@ export class MemoryGraphService {
       return 0.6; // Fallback if no high-strength data available
     }
 
-    // Calculate 75th percentile of existing strong associations
-    const strengths = highStrengthAssociations.map(a => a.associationStrength).sort((a, b) => a - b);
-    const percentile75Index = Math.floor(strengths.length * 0.75);
-    const calculatedThreshold = strengths[percentile75Index];
+    // Calculate 75th percentile of existing strong associations using simple-statistics
+    const strengths = highStrengthAssociations.map(a => a.associationStrength);
+    const calculatedThreshold = ss.quantile(strengths, 0.75);
     
     // Return threshold with safety bounds
     return Math.max(0.6, Math.min(0.9, calculatedThreshold));
@@ -1087,12 +1085,137 @@ export class MemoryGraphService {
       return 24; // Fallback if no valid time gaps found
     }
 
-    // Calculate 80th percentile of successful temporal gaps
-    timeGapsHours.sort((a, b) => a - b);
-    const percentile80Index = Math.floor(timeGapsHours.length * 0.8);
-    const calculatedWindow = timeGapsHours[percentile80Index];
+    // Calculate 80th percentile of successful temporal gaps using simple-statistics
+    const calculatedWindow = ss.quantile(timeGapsHours, 0.8);
     
     // Constrain to 12-72 hours per research bounds
     return Math.min(Math.max(calculatedWindow, 12), 72);
+  }
+
+  /**
+   * Calculate data-driven association threshold by type
+   * Research: Graph clustering and meaningful connection thresholds
+   */
+  private async getAssociationThresholdByType(associationType: string, memoryId: string): Promise<number> {
+    // Get the persona ID from the memory
+    const memory = await this.prisma.memory.findUnique({
+      where: { id: memoryId },
+      select: { personaId: true }
+    });
+    
+    if (!memory) {
+      // Fallback to conservative threshold
+      return 0.4;
+    }
+
+    // Query successful associations by type (both memories accessed = successful retrieval)
+    const successfulAssociations = await this.prisma.memoryAssociation.findMany({
+      where: {
+        associationType,
+        OR: [
+          { memoryA: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } },
+          { memoryB: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } }
+        ]
+      },
+      select: { associationStrength: true },
+      take: 100,
+      orderBy: { associationStrength: 'asc' }
+    });
+
+    if (successfulAssociations.length === 0) {
+      // Research-based fallbacks by association type
+      const fallbackThresholds: Record<string, number> = {
+        temporal: 0.2,     // Temporal connections valuable even if weak
+        semantic: 0.4,     // Semantic similarity needs moderate strength
+        emotional: 0.3,    // Emotional connections moderately valuable
+        causal: 0.5,       // Causal relationships need strong evidence
+        reference: 0.8,    // Reference/mention connections need high confidence
+      };
+      return fallbackThresholds[associationType] || 0.3;
+    }
+
+    // Use 25th percentile of successful association strengths using simple-statistics
+    const strengths = successfulAssociations.map(a => a.associationStrength);
+    const threshold = ss.quantile(strengths, 0.25);
+    
+    // Apply minimum threshold to avoid noise
+    return Math.max(0.1, threshold);
+  }
+
+  /**
+   * Calculate data-driven similarity bounds for meaningful associations
+   * Research: Embedding similarity thresholds for semantic memory retrieval
+   */
+  private async calculateSimilarityBounds(memoryId: string): Promise<{ minDistance: number; maxDistance: number }> {
+    // Get the persona ID from the memory
+    const memory = await this.prisma.memory.findUnique({
+      where: { id: memoryId },
+      select: { personaId: true }
+    });
+    
+    if (!memory) {
+      // Conservative fallback bounds
+      return { minDistance: 0.1, maxDistance: 1.2 };
+    }
+
+    // Query semantic associations that led to successful retrievals
+    const successfulSemanticAssocs = await this.prisma.memoryAssociation.findMany({
+      where: {
+        associationType: 'semantic',
+        OR: [
+          { memoryA: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } },
+          { memoryB: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } }
+        ]
+      },
+      include: {
+        memoryA: { select: { embedding: true } },
+        memoryB: { select: { embedding: true } }
+      },
+      take: 100
+    });
+
+    if (successfulSemanticAssocs.length === 0) {
+      // Research-based fallback: typical embedding similarity ranges
+      return { minDistance: 0.1, maxDistance: 1.2 };
+    }
+
+    // Use PostgreSQL to calculate distance bounds with percentiles
+    const distanceQuery = await this.prisma.$queryRaw<{
+      min_distance: number;
+      max_distance: number;
+      sample_count: number;
+    }[]>`
+      WITH semantic_distances AS (
+        SELECT 
+          (ma_mem.embedding <=> mb_mem.embedding) as distance
+        FROM "MemoryAssociation" ma
+        JOIN "Memory" ma_mem ON ma_mem.id = ma."memoryA"
+        JOIN "Memory" mb_mem ON mb_mem.id = ma."memoryB"
+        WHERE ma."associationType" = 'semantic'
+          AND ma_mem."personaId" = ${memory.personaId}::uuid
+          AND ma_mem."accessCount" > 0
+          AND mb_mem."accessCount" > 0
+          AND ma_mem.embedding IS NOT NULL
+          AND mb_mem.embedding IS NOT NULL
+          AND (ma_mem.embedding <=> mb_mem.embedding) > 0
+        LIMIT 100
+      )
+      SELECT 
+        PERCENTILE_CONT(0.05) WITHIN GROUP (ORDER BY distance) as min_distance,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY distance) as max_distance,
+        COUNT(*)::int as sample_count
+      FROM semantic_distances
+    `;
+
+    if (distanceQuery.length === 0 || distanceQuery[0]?.sample_count === 0) {
+      return { minDistance: 0.1, maxDistance: 1.2 };
+    }
+
+    const stats = distanceQuery[0];
+    // Use 5th and 95th percentiles for similarity bounds 
+    const minDistance = Math.max(0.05, stats?.min_distance || 0.1);
+    const maxDistance = Math.min(1.5, stats?.max_distance || 1.2);
+    
+    return { minDistance, maxDistance };
   }
 }

@@ -55,22 +55,14 @@ interface ExtractedMemoryData {
 export class MemoryFormationService {
   private emotionCache: Map<string, EmotionType> = new Map();
   private promptCache: PromptCache;
-  // Configuration based on memory research
-  // Source: Recent memory effects typically span 3-14 days (Baddeley et al., 2015)
-  private readonly recentMemoryWindowDays: number;
+  // Memory window will be calculated dynamically based on successful associations
+  // Research: Recent memory effects typically span 3-14 days (Baddeley et al., 2015)
 
   constructor(
     private prisma: PrismaClient,
     private embeddingService: EmbeddingService,
     private memoryGraph: MemoryGraphService,
-    recentMemoryWindowDays: number = parseFloat(process.env.MEMORY_RECENT_WINDOW_DAYS || '7')
   ) {
-    if (recentMemoryWindowDays <= 0 || recentMemoryWindowDays > 30) {
-      throw new Error(
-        `Invalid recent memory window: ${recentMemoryWindowDays} days. Must be between 0-30 days based on memory research.`
-      );
-    }
-    this.recentMemoryWindowDays = recentMemoryWindowDays;
     this.promptCache = new PromptCache();
     this.loadEmotionTypes();
   }
@@ -539,11 +531,14 @@ export class MemoryFormationService {
     maxResults: number,
   ): Promise<string[]> {
     // Use temporal proximity - entities from recent memories are more likely relevant
+    // Calculate data-driven recency window based on successful memory associations
+    const recentWindowMs = await this.calculateRecentMemoryWindow(channel);
+    
     const recentMemories = await this.prisma.memory.findMany({
       where: {
         channel,
         occurredAt: {
-          gte: new Date(Date.now() - this.recentMemoryWindowDays * 24 * 60 * 60 * 1000),
+          gte: new Date(Date.now() - recentWindowMs),
         },
       },
       include: {
@@ -1170,5 +1165,60 @@ export class MemoryFormationService {
 
     const analysis = await b.CalculateReinforcementBoost(memoryContext);
     return analysis.boostAmount;
+  }
+
+  /**
+   * Calculate recent memory window based on successful association patterns
+   * Research: Embodied temporal proximity in memory association (Baddeley et al., 2015)
+   */
+  private async calculateRecentMemoryWindow(channel: string): Promise<number> {
+    // Query temporal gaps between memories that formed successful associations
+    const successfulAssociations = await this.prisma.memoryAssociation.findMany({
+      where: {
+        associationType: 'temporal',
+        associationStrength: { gt: 0.5 } // Associations that proved meaningful
+      },
+      include: {
+        memoryA: { select: { occurredAt: true, channel: true } },
+        memoryB: { select: { occurredAt: true, channel: true } }
+      },
+      take: 100,
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Filter associations from the same channel
+    const channelAssociations = successfulAssociations.filter(assoc => 
+      assoc.memoryA.channel === channel || assoc.memoryB.channel === channel
+    );
+
+    if (channelAssociations.length === 0) {
+      // Research-based fallback: 7 days is typical episodic memory window (Baddeley et al., 2015)
+      return 7 * 24 * 60 * 60 * 1000;
+    }
+
+    // Calculate time gaps between successfully associated memories
+    const timeGaps: number[] = [];
+    for (const assoc of channelAssociations) {
+      const gap = Math.abs(
+        assoc.memoryB.occurredAt.getTime() - assoc.memoryA.occurredAt.getTime()
+      );
+      if (gap > 0) {
+        timeGaps.push(gap);
+      }
+    }
+
+    if (timeGaps.length === 0) {
+      return 7 * 24 * 60 * 60 * 1000; // Fallback to research default
+    }
+
+    // Use 80th percentile of successful association time gaps
+    timeGaps.sort((a, b) => a - b);
+    const percentile80 = timeGaps[Math.floor(timeGaps.length * 0.8)];
+    
+    // Constrain to research bounds: 1-14 days per episodic memory research
+    const minWindow = 1 * 24 * 60 * 60 * 1000;  // 1 day
+    const maxWindow = 14 * 24 * 60 * 60 * 1000; // 14 days
+    
+    return Math.min(Math.max(percentile80, minWindow), maxWindow);
   }
 }

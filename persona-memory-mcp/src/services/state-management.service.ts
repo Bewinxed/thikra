@@ -1,5 +1,6 @@
 import type { PersonaState, PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import * as ss from 'simple-statistics';
 
 type JsonValue = Prisma.JsonValue;
 
@@ -306,15 +307,11 @@ export class StateManagementService {
       };
     }
 
-    const sum = numericValues.reduce((acc, val) => acc + val, 0);
-    const average = sum / numericValues.length;
-    const peak = Math.max(...numericValues);
-    const trough = Math.min(...numericValues);
-
-    // Calculate volatility as standard deviation
-    const variance =
-      numericValues.reduce((acc, val) => acc + (val - average) ** 2, 0) / numericValues.length;
-    const volatility = Math.sqrt(variance);
+    // Use simple-statistics for better accuracy and performance
+    const average = ss.mean(numericValues);
+    const peak = ss.max(numericValues);
+    const trough = ss.min(numericValues);
+    const volatility = ss.standardDeviation(numericValues);
 
     return {
       averageValue: average,

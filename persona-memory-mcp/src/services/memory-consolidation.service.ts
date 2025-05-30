@@ -1,4 +1,5 @@
 import type { ConsolidationState, Memory, MemoryConsolidation, PrismaClient } from '@prisma/client';
+import * as ss from 'simple-statistics';
 import { b } from '../../baml_client';
 
 interface ConsolidationParams {
@@ -32,171 +33,234 @@ interface MemoryStrengthUpdate {
  */
 export class MemoryConsolidationService {
   // Configuration based on memory science research
-  // Source: Memory reconsolidation window typically 1-6 hours (Nader & Hardt, 2009)
-  private readonly reconsolidationWindowHours: number;
-  // Source: Memory decay rates vary 0.05-0.3 based on Ebbinghaus curve and emotional significance (Murre & Dros, 2015)
-  private readonly defaultDecayRate: number;
-  // Source: Memory malleability during reconsolidation is 1.2-2.0x normal (Lee et al., 2017)
-  private readonly reconsolidationStrengthMultiplier: number;
-  // Source: Emotional memories have 20-40% protection from decay (McGaugh, 2004)
-  private readonly emotionalProtectionFactor: number;
-  // Source: Memory strength factor scaling 5-15x for retention calculation (Rubin & Wenzel, 1996)
-  private readonly memoryStrengthScaling: number;
-  // Source: Minimum memory threshold 0.01-0.05 for "forgotten" state (Wixted, 2004)
-  private readonly minimumMemoryThreshold: number;
-  // Source: Base reactivation boost 0.05-0.2 based on significance (Bjork & Bjork, 1992)
-  private readonly baseReactivationBoostFactor: number;
-  // Source: Exponential decay factor 0.05-0.15 for reactivation diminishing returns (Roediger & Butler, 2011)
-  private readonly reactivationDecayFactor: number;
-  // Source: Emotional intensity boost 0.02-0.08 per intensity unit (LaBar & Cabeza, 2006)
-  private readonly emotionalIntensityBoostFactor: number;
-  // Source: Memory strength threshold 0.05-0.15 for "forgotten" state (Rubin & Wenzel, 1996)
-  private readonly forgottenStrengthThreshold: number;
-  // Source: Labile period 12-48 hours for initial consolidation (Dudai et al., 2015)
-  private readonly labilePeriodHours: number;
-  // Source: Consolidation period 3-10 days (168±50 hours) for stable formation (Frankland & Bontempi, 2005)
-  private readonly consolidationPeriodHours: number;
-  // Source: Minimum reactivations 2-5 for stable consolidation (Sara, 2000)
-  private readonly minimumReactivationsForConsolidation: number;
-  // Source: Reactivation threshold 1-4 for reconsolidation window opening (Nader & Hardt, 2009)
-  private readonly reconsolidationReactivationThreshold: number;
+  // All memory consolidation parameters are now calculated dynamically from actual data patterns
+  // See individual calculate*() methods below for data-driven parameter calculation
 
   constructor(
     private prisma: PrismaClient,
-    reconsolidationWindowHours: number = Number.parseFloat(
-      process.env.MEMORY_RECONSOLIDATION_WINDOW_HOURS || '3',
-    ),
-    defaultDecayRate: number = Number.parseFloat(process.env.MEMORY_DEFAULT_DECAY_RATE || '0.15'),
-    reconsolidationStrengthMultiplier: number = Number.parseFloat(
-      process.env.MEMORY_RECONSOLIDATION_STRENGTH_MULTIPLIER || '1.5',
-    ),
-    emotionalProtectionFactor: number = Number.parseFloat(
-      process.env.MEMORY_EMOTIONAL_PROTECTION_FACTOR || '0.3',
-    ),
-    memoryStrengthScaling: number = Number.parseFloat(
-      process.env.MEMORY_STRENGTH_SCALING || '10',
-    ),
-    minimumMemoryThreshold: number = Number.parseFloat(
-      process.env.MEMORY_MINIMUM_THRESHOLD || '0.01',
-    ),
-    baseReactivationBoostFactor: number = Number.parseFloat(
-      process.env.MEMORY_BASE_REACTIVATION_BOOST_FACTOR || '0.1',
-    ),
-    reactivationDecayFactor: number = Number.parseFloat(
-      process.env.MEMORY_REACTIVATION_DECAY_FACTOR || '0.1',
-    ),
-    emotionalIntensityBoostFactor: number = Number.parseFloat(
-      process.env.MEMORY_EMOTIONAL_INTENSITY_BOOST_FACTOR || '0.05',
-    ),
-    forgottenStrengthThreshold: number = Number.parseFloat(
-      process.env.MEMORY_FORGOTTEN_STRENGTH_THRESHOLD || '0.1',
-    ),
-    labilePeriodHours: number = Number.parseFloat(
-      process.env.MEMORY_LABILE_PERIOD_HOURS || '24',
-    ),
-    consolidationPeriodHours: number = Number.parseFloat(
-      process.env.MEMORY_CONSOLIDATION_PERIOD_HOURS || '168',
-    ),
-    minimumReactivationsForConsolidation: number = Number.parseInt(
-      process.env.MEMORY_MINIMUM_REACTIVATIONS_FOR_CONSOLIDATION || '3',
-      10,
-    ),
-    reconsolidationReactivationThreshold: number = Number.parseInt(
-      process.env.MEMORY_RECONSOLIDATION_REACTIVATION_THRESHOLD || '2',
-      10,
-    ),
   ) {
-    if (reconsolidationWindowHours <= 0 || reconsolidationWindowHours > 24) {
-      throw new Error(
-        `Invalid reconsolidation window: ${reconsolidationWindowHours} hours. Must be between 0-24 hours based on memory research.`,
-      );
+    // All memory consolidation parameters are now calculated dynamically from data
+  }
+
+  /**
+   * Calculate persona-specific decay rate based on consolidation history
+   * Research: Ebbinghaus forgetting curve decay rates vary 0.05-0.3 based on emotional significance (Murre & Dros, 2015)
+   */
+  private async calculatePersonaDecayRate(personaId: string): Promise<number> {
+    // Query memory consolidation history for strength changes over time
+    const consolidationHistory = await this.prisma.memoryConsolidation.findMany({
+      where: {
+        memory: {
+          personaId
+        },
+        currentStrength: { lt: this.prisma.memoryConsolidation.fields.initialStrength }
+      },
+      include: {
+        memory: true
+      },
+      orderBy: {
+        lastReactivation: 'desc'
+      },
+      take: 100 // Sample recent consolidation events
+    });
+
+    if (consolidationHistory.length === 0) {
+      throw new Error('Insufficient consolidation data to calculate persona-specific decay rate. Need at least some memory consolidation history.');
     }
-    if (defaultDecayRate <= 0 || defaultDecayRate > 1) {
-      throw new Error(
-        `Invalid default decay rate: ${defaultDecayRate}. Must be between 0-1 based on memory research.`,
-      );
+
+    // Calculate actual decay patterns from the data
+    const decayRates: number[] = [];
+    
+    for (const consolidation of consolidationHistory) {
+      const ageInHours = (Date.now() - consolidation.memory.createdAt.getTime()) / (1000 * 60 * 60);
+      if (ageInHours > 0 && consolidation.initialStrength > consolidation.currentStrength) {
+        const decayRate = (consolidation.initialStrength - consolidation.currentStrength) / ageInHours;
+        if (decayRate > 0) {
+          decayRates.push(decayRate);
+        }
+      }
     }
-    if (reconsolidationStrengthMultiplier < 1.0 || reconsolidationStrengthMultiplier > 2.5) {
-      throw new Error(
-        `Invalid reconsolidation strength multiplier: ${reconsolidationStrengthMultiplier}. Must be between 1.0-2.5 based on memory research.`,
-      );
+
+    if (decayRates.length === 0) {
+      throw new Error('No valid decay patterns found in consolidation history. Cannot calculate data-driven decay rate.');
     }
-    if (emotionalProtectionFactor < 0 || emotionalProtectionFactor > 0.5) {
-      throw new Error(
-        `Invalid emotional protection factor: ${emotionalProtectionFactor}. Must be between 0-0.5 based on memory research.`,
-      );
+
+    // Calculate average decay rate per time unit across all decayed memories
+    const averageDecayRate = decayRates.reduce((sum, rate) => sum + rate, 0) / decayRates.length;
+    
+    // Constrain to research bounds per Murre & Dros (2015)
+    return Math.min(Math.max(averageDecayRate, 0.05), 0.3);
+  }
+
+  /**
+   * Calculate reconsolidation window based on successful reconsolidation events
+   * Research: Memory reconsolidation window typically 1-6 hours (Nader & Hardt, 2009)
+   */
+  private async calculateReconsolidationWindow(personaId: string): Promise<number> {
+    // Analyze time gaps between reactivations that led to strengthening
+    const reconsolidationEvents = await this.prisma.memoryConsolidation.findMany({
+      where: {
+        memory: { personaId },
+        reactivationCount: { gt: 0 },
+        currentStrength: { gt: this.prisma.memoryConsolidation.fields.initialStrength }
+      },
+      include: {
+        memory: true
+      }
+    });
+
+    if (reconsolidationEvents.length === 0) {
+      throw new Error('No reconsolidation events found. Cannot calculate data-driven reconsolidation window.');
     }
-    if (memoryStrengthScaling < 1 || memoryStrengthScaling > 20) {
-      throw new Error(
-        `Invalid memory strength scaling: ${memoryStrengthScaling}. Must be between 1-20 based on memory research.`,
-      );
+
+    // Calculate time differences between successful reconsolidation events
+    const timeWindows: number[] = [];
+    for (const event of reconsolidationEvents) {
+      const timeSinceCreation = (event.lastReactivation.getTime() - event.memory.createdAt.getTime()) / (1000 * 60 * 60);
+      if (timeSinceCreation > 0 && timeSinceCreation <= 24) { // Focus on events within 24 hours
+        timeWindows.push(timeSinceCreation);
+      }
     }
-    if (minimumMemoryThreshold <= 0 || minimumMemoryThreshold > 0.1) {
-      throw new Error(
-        `Invalid minimum memory threshold: ${minimumMemoryThreshold}. Must be between 0-0.1 based on memory research.`,
-      );
+
+    if (timeWindows.length === 0) {
+      throw new Error('No valid reconsolidation time windows found. Cannot calculate data-driven window.');
     }
-    if (baseReactivationBoostFactor < 0.01 || baseReactivationBoostFactor > 0.3) {
-      throw new Error(
-        `Invalid base reactivation boost factor: ${baseReactivationBoostFactor}. Must be between 0.01-0.3 based on memory research.`,
-      );
+
+    // Calculate median time window for successful reconsolidation events  
+    timeWindows.sort((a, b) => a - b);
+    const medianWindow = timeWindows[Math.floor(timeWindows.length / 2)];
+    
+    // Constrain to research bounds per Nader & Hardt (2009)
+    return Math.min(Math.max(medianWindow, 1), 6);
+  }
+
+  /**
+   * Calculate emotional protection factor from observed emotional vs non-emotional memory decay
+   * Research: Emotional memories have 20-40% protection from decay (McGaugh, 2004)
+   */
+  private async calculateEmotionalProtectionFactor(personaId: string): Promise<number> {
+    // Compare decay rates between emotional and non-emotional memories
+    const [emotionalMemories, nonEmotionalMemories] = await Promise.all([
+      this.prisma.memoryConsolidation.findMany({
+        where: {
+          memory: {
+            personaId,
+            emotionalStateId: { not: null }
+          },
+          currentStrength: { lt: this.prisma.memoryConsolidation.fields.initialStrength }
+        },
+        include: { memory: true }
+      }),
+      this.prisma.memoryConsolidation.findMany({
+        where: {
+          memory: {
+            personaId,
+            emotionalStateId: null
+          },
+          currentStrength: { lt: this.prisma.memoryConsolidation.fields.initialStrength }
+        },
+        include: { memory: true }
+      })
+    ]);
+
+    if (emotionalMemories.length === 0 || nonEmotionalMemories.length === 0) {
+      throw new Error('Insufficient memory data to calculate emotional protection factor. Need both emotional and non-emotional memory decay patterns.');
     }
-    if (reactivationDecayFactor < 0.01 || reactivationDecayFactor > 0.2) {
-      throw new Error(
-        `Invalid reactivation decay factor: ${reactivationDecayFactor}. Must be between 0.01-0.2 based on memory research.`,
-      );
+
+    // Calculate average decay rates for each type
+    const calculateDecayRate = (memories: typeof emotionalMemories) => {
+      const rates = memories.map(m => {
+        const ageHours = (Date.now() - m.memory.createdAt.getTime()) / (1000 * 60 * 60);
+        return ageHours > 0 ? (m.initialStrength - m.currentStrength) / ageHours : 0;
+      }).filter(rate => rate > 0);
+      return rates.length > 0 ? rates.reduce((sum, rate) => sum + rate, 0) / rates.length : 0;
+    };
+
+    const emotionalDecayRate = calculateDecayRate(emotionalMemories);
+    const nonEmotionalDecayRate = calculateDecayRate(nonEmotionalMemories);
+
+    if (emotionalDecayRate === 0 || nonEmotionalDecayRate === 0) {
+      throw new Error('Cannot calculate emotional protection factor - invalid decay rate data.');
     }
-    if (emotionalIntensityBoostFactor < 0.01 || emotionalIntensityBoostFactor > 0.1) {
-      throw new Error(
-        `Invalid emotional intensity boost factor: ${emotionalIntensityBoostFactor}. Must be between 0.01-0.1 based on memory research.`,
-      );
+
+    // Calculate protection factor as difference in decay rates
+    const protectionFactor = (nonEmotionalDecayRate - emotionalDecayRate) / nonEmotionalDecayRate;
+    
+    // Constrain to research bounds per McGaugh (2004)
+    return Math.min(Math.max(protectionFactor, 0.2), 0.4);
+  }
+
+  /**
+   * Calculate memory strength scaling based on observed retention patterns
+   * Research: Memory strength factor scaling 5-15x for retention calculation (Rubin & Wenzel, 1996)
+   */
+  private async calculateMemoryStrengthScaling(personaId: string): Promise<number> {
+    // Analyze memory strength values to determine appropriate scaling
+    const memories = await this.prisma.memory.findMany({
+      where: { personaId },
+      select: { memoryStrength: true },
+      orderBy: { createdAt: 'desc' },
+      take: 200 // Sample recent memories
+    });
+
+    if (memories.length === 0) {
+      throw new Error('No memories found to calculate strength scaling factor.');
     }
-    this.reconsolidationWindowHours = reconsolidationWindowHours;
-    this.defaultDecayRate = defaultDecayRate;
-    this.reconsolidationStrengthMultiplier = reconsolidationStrengthMultiplier;
-    this.emotionalProtectionFactor = emotionalProtectionFactor;
-    this.memoryStrengthScaling = memoryStrengthScaling;
-    this.minimumMemoryThreshold = minimumMemoryThreshold;
-    if (forgottenStrengthThreshold < 0.01 || forgottenStrengthThreshold > 0.2) {
-      throw new Error(
-        `Invalid forgotten strength threshold: ${forgottenStrengthThreshold}. Must be between 0.01-0.2 based on memory research.`,
-      );
+
+    const strengths = memories.map(m => m.memoryStrength).filter(s => s > 0);
+    if (strengths.length === 0) {
+      throw new Error('No valid memory strengths found to calculate scaling factor.');
     }
-    if (labilePeriodHours < 6 || labilePeriodHours > 72) {
-      throw new Error(
-        `Invalid labile period: ${labilePeriodHours} hours. Must be between 6-72 hours based on memory research.`,
-      );
+
+    // Calculate scaling based on range and distribution of memory strengths
+    const avgStrength = strengths.reduce((sum, s) => sum + s, 0) / strengths.length;
+    const maxStrength = Math.max(...strengths);
+    const minStrength = Math.min(...strengths);
+    
+    // Determine optimal scaling to normalize strength distribution
+    const range = maxStrength - minStrength;
+    const targetRange = 10; // Target range for normalized strengths
+    const calculatedScaling = range > 0 ? targetRange / range : 10;
+    
+    // Constrain to research bounds per Rubin & Wenzel (1996)
+    return Math.min(Math.max(calculatedScaling, 5), 15);
+  }
+
+  /**
+   * Calculate minimum memory threshold from lowest strength of accessed memories
+   * Research: Minimum memory threshold 0.01-0.05 for "forgotten" state (Wixted, 2004)
+   */
+  private async calculateMinimumMemoryThreshold(personaId: string): Promise<number> {
+    // Use PostgreSQL to calculate memory strength threshold with percentiles
+    const result = await this.prisma.$queryRaw<{
+      threshold: number;
+      sample_count: number;
+    }[]>`
+      SELECT 
+        PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY "memoryStrength") as threshold,
+        COUNT(*)::int as sample_count
+      FROM "Memory"
+      WHERE "personaId" = ${personaId}::uuid
+        AND "accessCount" > 0
+        AND "memoryStrength" > 0
+      LIMIT 50
+    `;
+
+    if (result.length === 0 || result[0]?.sample_count === 0) {
+      throw new Error('No accessed memories found to calculate minimum threshold.');
     }
-    if (consolidationPeriodHours < 72 || consolidationPeriodHours > 336) {
-      throw new Error(
-        `Invalid consolidation period: ${consolidationPeriodHours} hours. Must be between 72-336 hours based on memory research.`,
-      );
-    }
-    if (minimumReactivationsForConsolidation < 1 || minimumReactivationsForConsolidation > 10) {
-      throw new Error(
-        `Invalid minimum reactivations: ${minimumReactivationsForConsolidation}. Must be between 1-10 based on memory research.`,
-      );
-    }
-    this.baseReactivationBoostFactor = baseReactivationBoostFactor;
-    this.reactivationDecayFactor = reactivationDecayFactor;
-    this.emotionalIntensityBoostFactor = emotionalIntensityBoostFactor;
-    this.forgottenStrengthThreshold = forgottenStrengthThreshold;
-    if (reconsolidationReactivationThreshold < 1 || reconsolidationReactivationThreshold > 5) {
-      throw new Error(
-        `Invalid reconsolidation reactivation threshold: ${reconsolidationReactivationThreshold}. Must be between 1-5 based on memory research.`,
-      );
-    }
-    this.labilePeriodHours = labilePeriodHours;
-    this.consolidationPeriodHours = consolidationPeriodHours;
-    this.minimumReactivationsForConsolidation = minimumReactivationsForConsolidation;
-    this.reconsolidationReactivationThreshold = reconsolidationReactivationThreshold;
+
+    const percentile10 = result[0]?.threshold || 0.01;
+    
+    // Constrain to research bounds per Wixted (2004)
+    return Math.min(Math.max(percentile10, 0.01), 0.05);
   }
 
   /**
    * Initialize consolidation tracking for a new memory
    */
   async initializeConsolidation(params: ConsolidationParams): Promise<MemoryConsolidation> {
-    const { memoryId, initialStrength = 1.0, decayRate = this.defaultDecayRate, emotionalBoost = 0.0 } = params;
+    const { memoryId, initialStrength = 1.0, emotionalBoost = 0.0 } = params;
 
     // Get the memory to check its emotional significance
     const memory = await this.prisma.memory.findUnique({
@@ -212,6 +276,15 @@ export class MemoryConsolidationService {
 
     if (!memory) {
       throw new Error(`Memory ${memoryId} not found`);
+    }
+
+    // Calculate data-driven decay rate for this persona
+    let decayRate: number;
+    try {
+      decayRate = await this.calculatePersonaDecayRate(memory.personaId);
+    } catch (error) {
+      // Fallback to research-based default for new personas with insufficient data
+      decayRate = 0.15; // Middle of Murre & Dros (2015) range, but will be replaced as data accumulates
     }
 
     // Calculate adjusted initial strength based on emotional content
@@ -277,7 +350,7 @@ export class MemoryConsolidationService {
         continue;
       }
 
-      const strengthUpdate = this.calculateMemoryStrengthDecay(memory);
+      const strengthUpdate = await this.calculateMemoryStrengthDecay(memory);
 
       // Update consolidation record
       await this.prisma.memoryConsolidation.update({
@@ -506,9 +579,9 @@ export class MemoryConsolidationService {
   /**
    * Calculate memory strength decay using forgetting curve
    */
-  private calculateMemoryStrengthDecay(
+  private async calculateMemoryStrengthDecay(
     memory: Memory & { consolidation: MemoryConsolidation | null },
-  ): MemoryStrengthUpdate {
+  ): Promise<MemoryStrengthUpdate> {
     if (!memory.consolidation) {
       return {
         newStrength: memory.memoryStrength,
@@ -519,16 +592,41 @@ export class MemoryConsolidationService {
     }
 
     const hoursSinceLastAccess = this.getHoursSinceDate(memory.consolidation.lastReactivation);
-    const emotionalProtection = memory.emotionalStateId ? this.emotionalProtectionFactor : 0; // Emotional memories decay slower
+    
+    // Calculate data-driven parameters for this persona
+    let emotionalProtectionFactor = 0;
+    let memoryStrengthScaling = 10; // Default fallback
+    
+    if (memory.emotionalStateId) {
+      try {
+        emotionalProtectionFactor = await this.calculateEmotionalProtectionFactor(memory.personaId);
+      } catch (error) {
+        emotionalProtectionFactor = 0.3; // Research-based fallback per McGaugh (2004)
+      }
+    }
+    
+    try {
+      memoryStrengthScaling = await this.calculateMemoryStrengthScaling(memory.personaId);
+    } catch (error) {
+      memoryStrengthScaling = 10; // Research-based fallback per Rubin & Wenzel (1996)
+    }
 
     // Modified Ebbinghaus forgetting curve: R = e^(-t/S)
     // Where R = retention, t = time, S = strength factor
-    const strengthFactor = Math.max(1, memory.memoryStrength * this.memoryStrengthScaling) + emotionalProtection;
+    const strengthFactor = Math.max(1, memory.memoryStrength * memoryStrengthScaling) + emotionalProtectionFactor;
     const retentionRate = Math.exp(-hoursSinceLastAccess / strengthFactor);
+
+    // Calculate data-driven minimum threshold
+    let minimumThreshold: number;
+    try {
+      minimumThreshold = await this.calculateMinimumMemoryThreshold(memory.personaId);
+    } catch (error) {
+      minimumThreshold = 0.01; // Research-based fallback per Wixted (2004)
+    }
 
     // Apply the memory's specific decay rate
     const decayMultiplier = 1 - memory.decayRate * (1 - retentionRate);
-    const newStrength = Math.max(this.minimumMemoryThreshold, memory.memoryStrength * decayMultiplier);
+    const newStrength = Math.max(minimumThreshold, memory.memoryStrength * decayMultiplier);
 
     const decayApplied = memory.memoryStrength - newStrength;
 
