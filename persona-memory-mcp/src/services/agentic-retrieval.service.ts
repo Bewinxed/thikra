@@ -113,12 +113,12 @@ export class AgenticMemoryRetrieval {
     await this.performSemanticSearch(query, context);
 
     // Pass 2: Temporal context search if time-sensitive
-    if (this.isTimeRelevant(query.query)) {
+    if (await this.isTimeRelevant(query.query)) {
       await this.performTemporalSearch(query, context);
     }
 
     // Pass 3: Emotional context search if emotionally relevant
-    if (this.isEmotionallyRelevant(query.query)) {
+    if (await this.isEmotionallyRelevant(query.query)) {
       await this.performEmotionalSearch(query, context);
     }
 
@@ -373,7 +373,7 @@ export class AgenticMemoryRetrieval {
         const associations = await this.memoryGraph.getRelatedMemories({
           memoryId,
           limit: 5,
-          minStrength: this.getAssociationStrengthForAgenticRetrieval(context),
+          minStrength: await this.getAssociationStrengthForAgenticRetrieval(context),
         });
 
         for (const assoc of associations) {
@@ -780,7 +780,7 @@ export class AgenticMemoryRetrieval {
 
     // Base relevance from modality match analysis
     let relevance = await this.calculateModalityMatchRelevance(
-      memory.contentType,
+      memory.contentType || 'text',
       originalQuery,
       memory.personaId,
     );
@@ -871,20 +871,25 @@ export class AgenticMemoryRetrieval {
 
   /**
    * Get adaptive association strength threshold for agentic retrieval
-   * Dynamically adjusts based on search context and results quality
+   * Dynamically adjusts based on search context and results quality with data-driven bounds
    */
-  private getAssociationStrengthForAgenticRetrieval(context: RetrievalContext): number {
-    // Start with base threshold
-    let threshold = 0.4;
+  private async getAssociationStrengthForAgenticRetrieval(
+    context: RetrievalContext,
+  ): Promise<number> {
+    // Calculate data-driven adaptive range for this persona
+    const adaptiveRange = await this.calculateAdaptiveStrengthRange(context.personaId);
+
+    // Start with learned base threshold
+    let threshold = (adaptiveRange.min + adaptiveRange.max) / 2;
 
     // Increase threshold if we already have many results (avoid noise)
     if (context.totalResults.length > 15) {
-      threshold += 0.2;
+      threshold += (adaptiveRange.max - threshold) * 0.5;
     }
 
     // Decrease threshold if previous searches found few results (be more inclusive)
     if (context.totalResults.length < 5) {
-      threshold -= 0.1;
+      threshold -= (threshold - adaptiveRange.min) * 0.5;
     }
 
     // Adjust based on average quality of current results using simple-statistics
@@ -892,14 +897,14 @@ export class AgenticMemoryRetrieval {
       const relevanceScores = context.totalResults.map((r) => r.relevanceScore);
       const avgRelevance = ss.mean(relevanceScores);
       if (avgRelevance > 0.7) {
-        threshold += 0.1; // Be more selective if quality is already high
+        threshold += (adaptiveRange.max - threshold) * 0.3; // Be more selective if quality is high
       } else if (avgRelevance < 0.4) {
-        threshold -= 0.1; // Be more inclusive if quality is low
+        threshold -= (threshold - adaptiveRange.min) * 0.3; // Be more inclusive if quality is low
       }
     }
 
-    // Constrain to reasonable bounds (will be made fully data-driven when personaId is available)
-    return Math.max(0.2, Math.min(0.8, threshold));
+    // Constrain to learned bounds from retrieval success patterns
+    return Math.max(adaptiveRange.min, Math.min(adaptiveRange.max, threshold));
   }
 
   /**
@@ -910,11 +915,13 @@ export class AgenticMemoryRetrieval {
     personaId: string,
   ): Promise<{ min: number; max: number }> {
     // Use PostgreSQL to calculate strength range from bidirectional associations
-    const result = await this.prisma.$queryRaw<{
-      min_strength: number;
-      max_strength: number;
-      sample_count: number;
-    }[]>`
+    const result = await this.prisma.$queryRaw<
+      {
+        min_strength: number;
+        max_strength: number;
+        sample_count: number;
+      }[]
+    >`
       WITH association_strengths AS (
         -- Get all association strengths from memories that were successfully retrieved
         SELECT ma."associationStrength" as strength
@@ -938,13 +945,16 @@ export class AgenticMemoryRetrieval {
       FROM association_strengths
     `;
 
-    if (result.length === 0 || result[0].sample_count === 0) {
+    if (result.length === 0 || result[0]?.sample_count === 0) {
       // Research-based fallback: Embodied cognition optimal range per Damasio's somatic marker hypothesis
       return { min: 0.3, max: 0.7 }; // Somatic markers operate in mid-range thresholds
     }
 
     const stats = result[0];
-    
+    if (!stats) {
+      return { min: 0.3, max: 0.7 }; // Fallback
+    }
+
     // Constrain to research bounds per embodied cognition studies (0.1-0.9 range)
     return {
       min: Math.min(Math.max(stats.min_strength || 0.3, 0.1), 0.5),
@@ -958,10 +968,12 @@ export class AgenticMemoryRetrieval {
    */
   private async calculateMinimumEmotionalRelevanceForLLM(personaId: string): Promise<number> {
     // Use PostgreSQL to calculate emotional intensity threshold with somatic marker analysis
-    const result = await this.prisma.$queryRaw<{
-      emotional_threshold: number;
-      sample_count: number;
-    }[]>`
+    const result = await this.prisma.$queryRaw<
+      {
+        emotional_threshold: number;
+        sample_count: number;
+      }[]
+    >`
       WITH emotional_intensities AS (
         -- Get emotional intensities from accessed memories
         SELECT esc.intensity
@@ -993,7 +1005,7 @@ export class AgenticMemoryRetrieval {
     }
 
     const threshold = result[0]?.emotional_threshold || 0.35;
-    
+
     // Constrain to research bounds per embodied emotion studies (0.2-0.6 range)
     return Math.min(Math.max(threshold, 0.2), 0.6);
   }
@@ -1084,13 +1096,15 @@ export class AgenticMemoryRetrieval {
     minExcellentCount: number;
   }> {
     // Use PostgreSQL to calculate quality thresholds with statistical functions
-    const result = await this.prisma.$queryRaw<{
-      excellent: number;
-      good: number;
-      promising: number;
-      variance: number;
-      sample_count: number;
-    }[]>`
+    const result = await this.prisma.$queryRaw<
+      {
+        excellent: number;
+        good: number;
+        promising: number;
+        variance: number;
+        sample_count: number;
+      }[]
+    >`
       WITH quality_scores AS (
         SELECT 
           LEAST(1.0, 
@@ -1116,7 +1130,7 @@ export class AgenticMemoryRetrieval {
       FROM quality_scores
     `;
 
-    if (result.length === 0 || result[0].sample_count === 0) {
+    if (result.length === 0 || result[0]?.sample_count === 0) {
       // Research-based fallbacks using somatic marker hypothesis
       return {
         excellent: 0.75, // High embodied cognition threshold
@@ -1128,14 +1142,23 @@ export class AgenticMemoryRetrieval {
     }
 
     const stats = result[0];
-    const maxVariance = Math.min(0.2, (stats?.variance || 0.15) * 1.5); // Allow 50% more variance than observed
-    const minExcellentCount = Math.max(1, Math.floor((stats?.sample_count || 10) * 0.1));
+    if (!stats) {
+      return {
+        excellent: 0.75,
+        good: 0.5,
+        promising: 0.65,
+        maxVariance: 0.15,
+        minExcellentCount: 2,
+      };
+    }
+    const maxVariance = Math.min(0.2, (stats.variance || 0.15) * 1.5); // Allow 50% more variance than observed
+    const minExcellentCount = Math.max(1, Math.floor((stats.sample_count || 10) * 0.1));
 
     // Constrain to reasonable bounds for embodied memory retrieval
     return {
-      excellent: Math.min(Math.max(stats?.excellent || 0.75, 0.65), 0.9),
-      good: Math.min(Math.max(stats?.good || 0.5, 0.4), 0.7),
-      promising: Math.min(Math.max(stats?.promising || 0.65, 0.55), 0.8),
+      excellent: Math.min(Math.max(stats.excellent || 0.75, 0.65), 0.9),
+      good: Math.min(Math.max(stats.good || 0.5, 0.4), 0.7),
+      promising: Math.min(Math.max(stats.promising || 0.65, 0.55), 0.8),
       maxVariance: Math.min(Math.max(maxVariance, 0.05), 0.25),
       minExcellentCount: Math.min(Math.max(minExcellentCount, 1), 5),
     };
@@ -1182,15 +1205,15 @@ export class AgenticMemoryRetrieval {
 
     if (temporalRetrievals.length === 0) {
       // Research-based fallbacks from temporal memory studies (Conway & Pleydell-Pearce, 2000; St. Jacques, 2011)
-      // Episodic memories show strongest associations within same temporal context (0.7) 
+      // Episodic memories show strongest associations within same temporal context (0.7)
       // with exponential decay (0.3) for memories outside the window
       return {
-        minInsideWindow: 0.7,        // Strong relevance within temporal window
-        centerDecayFactor: 0.5,      // 50% reduction from center to edge of window
-        minOutsideWindow: 0.1,       // Minimal relevance far outside window
-        baseOutsideRelevance: 0.6,   // Moderate relevance just outside window
+        minInsideWindow: 0.7, // Strong relevance within temporal window
+        centerDecayFactor: 0.5, // 50% reduction from center to edge of window
+        minOutsideWindow: 0.1, // Minimal relevance far outside window
+        baseOutsideRelevance: 0.6, // Moderate relevance just outside window
         relevanceWindowMultiplier: 1, // Standard window size without data
-        decayRate: 0.3,              // Exponential decay rate per Conway's model
+        decayRate: 0.3, // Exponential decay rate per Conway's model
       };
     }
 

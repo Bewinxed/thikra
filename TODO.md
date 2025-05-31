@@ -279,7 +279,176 @@ PERSONALITY_CONFIDENCE_GROWTH=0.2       // Faster growth rate for user satisfact
 // - Message 7+: Refinement and evolution
 ```
 
-## Phase 6: Optimization & Testing 🚀 Medium Priority
+## Phase 6: Relationship Dynamics & Emotional Evolution 💕 CRITICAL MISSING
+
+### 6.1 RelationshipEvolutionService ❌ CRITICAL MISSING
+**Location:** `src/services/relationship-evolution.service.ts` - **DOES NOT EXIST**
+
+**Issue**: System can STORE relationship values (`trustLevel`, `intimacyLevel`, `attraction`) but has NO LOGIC to evolve them based on interactions.
+
+**Current Gap**: 
+```typescript
+// Current: Manual state setting (testing only)
+await stateManagement.setState(persona.id, 'attraction', 0.8, 'Manual');
+
+// Missing: Dynamic evolution from conversation
+await processMessage(persona.id, "You look beautiful today");
+// Should automatically increase attraction based on content + personality traits
+```
+
+**Required Implementation:**
+```typescript
+class RelationshipEvolutionService {
+  // Core relationship dynamics
+  async evolveRelationshipFromInteraction(personaId: string, entityId: string, message: Message): Promise<RelationshipUpdate>
+  async calculateAttractionChange(content: string, currentAttraction: number, personalityTraits: PersonalityTrait[]): Promise<number>
+  async calculateIntimacyChange(conversation: Message[], currentIntimacy: number): Promise<number>
+  async calculateTrustChange(behavior: string, currentTrust: number, boundaries: Boundary[]): Promise<number>
+  
+  // Turn-on/turn-off detection
+  async detectTurnOns(content: string, personalityTraits: PersonalityTrait[]): Promise<AttractionTrigger[]>
+  async detectTurnOffs(content: string, boundaries: Boundary[]): Promise<RepulsionTrigger[]>
+  
+  // Personality-modulated responses (e.g., high devotion = stickier attraction)
+  async applyPersonalityModulation(rawChange: number, traitName: string, traitValue: number): Promise<number>
+}
+```
+
+### 6.2 EmotionalStateEvolutionService ❌ CRITICAL MISSING
+**Location:** `src/services/emotional-state-evolution.service.ts` - **DOES NOT EXIST**
+
+**Issue**: System can store emotional states (`arousal`, `heat_level`, `emotional_overwhelm`) but has NO INTELLIGENCE to evolve them.
+
+**Current Gap**:
+```typescript
+// Current: Static state storage
+await stateManagement.setState(persona.id, 'arousal', 3.5, 'Static');
+
+// Missing: Dynamic arousal evolution
+await processMessage(persona.id, "I want to touch you softly");
+// Should automatically increase arousal based on intimacy level + personality + content
+```
+
+**Required Implementation:**
+```typescript
+class EmotionalStateEvolutionService {
+  // Core emotional evolution  
+  async evolveEmotionalStatesFromMessage(personaId: string, message: Message): Promise<StateUpdate[]>
+  async calculateArousalChange(content: string, currentArousal: number, relationship: Relationship): Promise<number>
+  async calculateEmotionalResponse(emotion: string, intensity: number, personalityTraits: PersonalityTrait[]): Promise<EmotionalStateChange>
+  
+  // Context-driven state changes
+  async linkStatesFromContext(personaId: string, context: ConversationContext): Promise<StateCorrelation[]>
+  async applyEmotionalContagion(senderEmotion: EmotionalState, relationship: Relationship): Promise<EmotionalStateChange>
+}
+```
+
+### 6.3 InteractionProcessorService ❌ CRITICAL MISSING
+**Location:** `src/services/interaction-processor.service.ts` - **DOES NOT EXIST**
+
+**Issue**: No main orchestrator to coordinate relationship/emotional updates from each message.
+
+**Current Gap**: Each message is processed for memory formation but relationship/emotional dynamics are ignored.
+
+**Required Implementation:**
+```typescript
+class InteractionProcessorService {
+  constructor(
+    private relationshipEvolution: RelationshipEvolutionService,
+    private emotionalEvolution: EmotionalStateEvolutionService,
+    private memoryLinking: EmotionalMemoryLinkingService
+  ) {}
+
+  // Main entry point for MCP server
+  async processInteraction(personaId: string, message: Message): Promise<InteractionResult> {
+    // 1. Analyze message for relationship/emotional signals
+    const analysis = await this.analyzeInteractionType(message.content);
+    
+    // 2. Update relationship dynamics
+    if (analysis.hasRelationshipContent) {
+      await this.relationshipEvolution.evolveRelationshipFromInteraction(personaId, message.senderId, message);
+    }
+    
+    // 3. Evolve emotional states
+    if (analysis.hasEmotionalContent) {
+      await this.emotionalEvolution.evolveEmotionalStatesFromMessage(personaId, message);
+    }
+    
+    // 4. Link current states to memory formation
+    await this.memoryLinking.weightMemoryFormationByEmotionalState(personaId, message);
+    
+    return analysis;
+  }
+}
+```
+
+### 6.4 EmotionalMemoryLinkingService ❌ MISSING
+**Location:** `src/services/emotional-memory-linking.service.ts` - **DOES NOT EXIST**
+
+**Issue**: Emotional states and memory formation/retrieval are disconnected.
+
+**Current Gap**: High arousal doesn't make intimate memories more vivid or easier to recall.
+
+**Required Implementation:**
+```typescript
+class EmotionalMemoryLinkingService {
+  // Memory-emotion integration
+  async strengthenMemoriesByEmotionalState(personaId: string, emotionalState: EmotionalState): Promise<Memory[]>
+  async recallSimilarEmotionalMemories(personaId: string, currentEmotion: string, threshold: number): Promise<Memory[]>
+  async weightMemoryFormationByArousal(memory: Memory, arousalLevel: number): Promise<number>
+  
+  // State-driven memory retrieval (for MCP responses)
+  async getEmotionallyRelevantMemories(personaId: string, currentStates: PersonaState[]): Promise<Memory[]>
+  async linkNewMemoryToEmotionalContext(memoryId: string, emotionalContext: EmotionalState[]): Promise<void>
+}
+```
+
+### 6.5 BAML Functions for Relationship Dynamics ❌ MISSING
+**Location:** `baml_src/relationship-dynamics.baml` - **DOES NOT EXIST**
+
+**Issue**: No BAML functions to analyze relationship/emotional content in messages.
+
+**Required Functions:**
+```typescript
+// MISSING BAML functions:
+function AnalyzeAttraction(message: string, currentRelationship: Relationship, personalityTraits: PersonalityTrait[]) -> AttractionAnalysis
+function DetectIntimacyBuilding(conversationHistory: Message[], currentIntimacy: number) -> IntimacyChange  
+function IdentifyTurnOns(content: string, personalityProfile: PersonaProfile) -> TriggerAnalysis
+function IdentifyTurnOffs(content: string, boundaries: Boundary[], relationship: Relationship) -> RepulsionAnalysis
+function AnalyzeEmotionalContagion(senderEmotion: string, relationship: Relationship) -> EmotionalResponse
+function DetectPowerDynamicShift(message: string, currentPowerDynamic: PowerDynamic) -> PowerDynamicChange
+```
+
+### 6.6 Integration with MCP Server ❌ CRITICAL DEPENDENCY
+**Dependencies**: This phase requires MCP server (Phase 5) to be completed first.
+
+**Integration Point**: InteractionProcessorService should be called by MCP server on each message:
+```typescript
+// MCP Server integration:
+async function handleMessage(personaId: string, message: string) {
+  // 1. Process relationship/emotional dynamics
+  const interactionResult = await interactionProcessor.processInteraction(personaId, {
+    content: message,
+    senderId: 'user',
+    timestamp: new Date()
+  });
+  
+  // 2. Form memory with emotional weighting
+  const memory = await memoryFormation.createMemoryFromMessage(personaId, message, {
+    emotionalWeight: interactionResult.emotionalIntensity,
+    relationshipContext: interactionResult.relationshipChanges
+  });
+  
+  // 3. Return updated persona state for LLM context
+  return {
+    memory: memory,
+    currentStates: await stateManagement.getAllStates(personaId),
+    relationshipStatus: await relationshipEvolution.getCurrentRelationship(personaId, 'user')
+  };
+}
+```
+
+## Phase 7: Optimization & Testing 🚀 Medium Priority
 
 ### 6.1 Materialized Views
 ```sql

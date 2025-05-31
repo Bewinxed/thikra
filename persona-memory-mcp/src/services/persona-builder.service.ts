@@ -95,12 +95,9 @@ export class PersonaBuilder {
         combinedContent += content;
       }
 
-      this.bamlSchemaHash = crypto
-        .createHash('md5')
-        .update(combinedContent)
-        .digest('hex')
-        .substring(0, 8);
-      return this.bamlSchemaHash;
+      const hash = crypto.createHash('md5').update(combinedContent).digest('hex').substring(0, 8);
+      this.bamlSchemaHash = hash;
+      return hash;
     } catch (error) {
       // Fallback if BAML files can't be read
       return 'default';
@@ -398,18 +395,22 @@ export class PersonaBuilder {
    * Update persona name based on extracted characteristics
    * Replaces hardcoded generic names with dynamic generation
    */
-  private async updatePersonaName(personaId: string, extraction: Record<string, unknown>): Promise<void> {
+  private async updatePersonaName(personaId: string, extraction: ExtractionResult): Promise<void> {
     try {
-      // Prepare context for name generation
-      const identityData = extraction.identity as Record<string, unknown> | undefined;
-      const emotionalData = extraction.emotional as Record<string, unknown> | undefined;
-      
-      const identityComponents = identityData?.identityComponents as Array<{content: string; componentType: string}> | undefined;
-      const emotionalPatterns = emotionalData?.emotionalPatterns as Array<{description: string}> | undefined;
-      
-      const personalityTraits = identityComponents?.map(c => c.content).join('; ') || '';
-      const emotionalPatternsStr = emotionalPatterns?.map(p => p.description).join('; ') || '';
-      const identityComponentsStr = identityComponents?.map(c => `${c.componentType}: ${c.content}`).join('; ') || '';
+      // Prepare context for name generation from extraction result
+      const personalityTraits =
+        extraction.personalityTraits.map((t) => `${t.traitName} (${t.baselineValue})`).join('; ') ||
+        '';
+
+      const emotionalPatternsStr =
+        extraction.personalityTraits
+          .filter((t) => t.isCoreTrait)
+          .map((t) => t.traitName)
+          .join('; ') || '';
+
+      const identityComponentsStr =
+        extraction.identityComponents.map((c) => `${c.componentType}: ${c.content}`).join('; ') ||
+        '';
 
       // Generate dynamic name using BAML function
       const nameResult = await b.GeneratePersonaName(

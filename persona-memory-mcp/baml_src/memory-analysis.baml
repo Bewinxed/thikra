@@ -249,3 +249,65 @@ function CalculateReinforcementBoost(memoryContext: string) -> ReinforcementBoos
     {{ ctx.output_format }}
   "#
 }
+
+class TemporalRelevance {
+  hasTemporalAspect bool @description("Whether the content contains temporal/time-related elements")
+  temporalConfidence float @description("0.0 to 1.0, confidence in temporal assessment")
+  timeFrames string[] @description("Time frames or periods detected")
+  reasoning string @description("Explanation of temporal relevance")
+}
+
+function CheckTemporalRelevance(query: string) -> TemporalRelevance {
+  client OpenRouterGPT4oMini
+  
+  prompt #"
+    Analyze whether this query has temporal aspects that warrant time-based memory retrieval.
+    
+    Look for:
+    - Time references (yesterday, last week, recently, ago, etc.)
+    - Temporal context and chronological elements
+    - Time-sensitive questions or requests
+    - Sequential or timeline-related content
+    - Historical references and time periods
+    - Temporal relationships and causality
+    
+    Query: "{{ query }}"
+    
+    Determine if this query would benefit from temporal memory filtering and retrieval.
+    
+    {{ ctx.output_format }}
+  "#
+}
+
+class QueryModality {
+  targetModality string @description("Primary content type the query is asking about (text, image, audio, video)")
+  relatedModalities string[] @description("Related or secondary modalities mentioned")
+  modalityConfidence float @description("0.0 to 1.0, confidence in modality assessment")
+  reasoning string @description("Explanation of modality analysis")
+}
+
+function AnalyzeQueryModality(query: string) -> QueryModality {
+  client OpenRouterGPT4oMini
+  
+  prompt #"
+    Analyze what type of content modality this query is asking about or referring to.
+    
+    Content Types:
+    - text: Written content, conversations, notes, documents
+    - image: Pictures, photos, visual content, graphics
+    - audio: Sounds, music, voice recordings, spoken content
+    - video: Moving pictures, recordings, visual media with motion
+    
+    Look for:
+    - Direct references to content types ("show me the image", "play that song")
+    - Implicit modality indicators (visual words, auditory words)
+    - Cross-modal requests ("describe the picture", "transcript of audio")
+    - Multi-modal content references
+    
+    Query: "{{ query }}"
+    
+    Determine the primary and related content modalities for effective retrieval.
+    
+    {{ ctx.output_format }}
+  "#
+}

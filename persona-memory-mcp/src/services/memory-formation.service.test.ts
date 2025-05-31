@@ -50,20 +50,24 @@ describe('MemoryFormationService - Real Database Integration', () => {
         timestamp: new Date(),
       };
 
-      // This will call real BAML for emotion extraction
-      const memory = await service.createMemoryFromMessage(testData.persona.id, message, {
-        conversationId: 'test-conv-1',
-      });
+      // This will call real BAML for emotion extraction via public API
+      const memories = await service.createMemoriesFromConversation(
+        testData.persona.id,
+        [message],
+        { conversationId: 'test-conv-1' },
+      );
+      const memory = memories[0];
 
       // Verify memory was created
-      expect(memory.id).toBeTruthy();
-      expect(memory.searchText).toBe(message.content);
-      expect(memory.personaId).toBe(testData.persona.id);
+      expect(memory).toBeTruthy();
+      expect(memory?.id).toBeTruthy();
+      expect(memory?.searchText).toBe(message.content);
+      expect(memory?.personaId).toBe(testData.persona.id);
 
       // Verify in database
       const prisma = getTestPrisma();
       const dbMemory = await prisma.memory.findUnique({
-        where: { id: memory.id },
+        where: { id: memory?.id || '' },
         include: {
           emotionalState: {
             include: {
@@ -103,10 +107,11 @@ describe('MemoryFormationService - Real Database Integration', () => {
         },
       ];
 
+      // Test via public API - process messages individually
       const createdMemories = [];
       for (const msg of messages) {
-        const memory = await service.createMemoryFromMessage(testData.persona.id, msg);
-        createdMemories.push(memory);
+        const memories = await service.createMemoriesFromConversation(testData.persona.id, [msg]);
+        createdMemories.push(memories[0]);
       }
 
       // System messages should have lowest significance, assistant responses higher than user questions
@@ -236,16 +241,21 @@ describe('MemoryFormationService - Real Database Integration', () => {
       // Verify BAML extraction worked
       expect(bamlResult.primaryEmotions || bamlResult.personalityTraits).toBeTruthy();
 
-      // Create memory which should trigger emotion processing
-      const memory = await service.createMemoryFromMessage(testData.persona.id, {
-        role: 'user',
-        content: emotionalContent,
-      });
+      // Create memory which should trigger emotion processing via public API
+      const memories = await service.createMemoriesFromConversation(testData.persona.id, [
+        {
+          role: 'user',
+          content: emotionalContent,
+        },
+      ]);
+      const memory = memories[0];
+
+      expect(memory).toBeTruthy();
 
       // Verify emotional state was created in database
       const prisma = getTestPrisma();
       const memoryWithEmotion = await prisma.memory.findUnique({
-        where: { id: memory.id },
+        where: { id: memory?.id || '' },
         include: {
           emotionalState: {
             include: {
@@ -305,29 +315,36 @@ describe('MemoryFormationService - Real Database Integration', () => {
 
   describe('Memory Graph Integration', () => {
     it('should build associations for new memories using real MemoryGraphService', async () => {
-      // Create some base memories first
-      const baseMemory1 = await service.createMemoryFromMessage(testData.persona.id, {
-        role: 'user',
-        content: 'I love learning about neural networks and deep learning architectures.',
-      });
+      // Create memories via public API
+      const conversation = [
+        {
+          role: 'user' as const,
+          content: 'I love learning about neural networks and deep learning architectures.',
+        },
+        {
+          role: 'assistant' as const,
+          content:
+            'Transformers are a particularly interesting architecture for sequence modeling.',
+        },
+        {
+          role: 'user' as const,
+          content:
+            'The attention mechanism in transformers is fascinating for neural network design.',
+        },
+      ];
 
-      const baseMemory2 = await service.createMemoryFromMessage(testData.persona.id, {
-        role: 'assistant',
-        content: 'Transformers are a particularly interesting architecture for sequence modeling.',
-      });
-
-      // Create a related memory that should associate with the base memories
-      const newMemory = await service.createMemoryFromMessage(testData.persona.id, {
-        role: 'user',
-        content:
-          'The attention mechanism in transformers is fascinating for neural network design.',
-      });
+      const memories = await service.createMemoriesFromConversation(
+        testData.persona.id,
+        conversation,
+      );
+      const [baseMemory1, baseMemory2, newMemory] = memories;
 
       // Check that associations were created by the MemoryGraphService
       const prisma = getTestPrisma();
+      expect(newMemory).toBeTruthy();
       const associations = await prisma.memoryAssociation.findMany({
         where: {
-          OR: [{ memoryA: newMemory.id }, { memoryB: newMemory.id }],
+          OR: [{ memoryA: newMemory?.id }, { memoryB: newMemory?.id }],
         },
         include: {
           memoryARelation: true,
@@ -352,31 +369,35 @@ describe('MemoryFormationService - Real Database Integration', () => {
   describe('Database Integrity and Error Handling', () => {
     it('should handle invalid persona ID gracefully', async () => {
       await expect(
-        service.createMemoryFromMessage('non-existent-persona', {
-          role: 'user',
-          content: 'This should fail',
-        }),
+        service.createMemoriesFromConversation('non-existent-persona', [
+          {
+            role: 'user',
+            content: 'This should fail',
+          },
+        ]),
       ).rejects.toThrow();
     });
 
     it('should maintain data consistency with concurrent memory creation', async () => {
       const personaId = testData.persona.id;
 
-      // Create multiple memories concurrently
-      const memoryPromises = Array.from({ length: 5 }, (_, i) =>
-        service.createMemoryFromMessage(personaId, {
-          role: 'user',
-          content: `Concurrent message ${i}: Testing database integrity.`,
-        }),
-      );
+      // Create multiple memories concurrently via public API
+      const messages = Array.from({ length: 5 }, (_, i) => ({
+        role: 'user' as const,
+        content: `Concurrent message ${i}: Testing database integrity.`,
+      }));
 
-      const memories = await Promise.all(memoryPromises);
+      const memoryArrays = await Promise.all(
+        messages.map((msg) => service.createMemoriesFromConversation(personaId, [msg])),
+      );
+      const memories = memoryArrays.map((arr) => arr[0]);
 
       // All should succeed
       expect(memories.length).toBe(5);
       memories.forEach((memory, index) => {
-        expect(memory.id).toBeTruthy();
-        expect(memory.searchText).toContain(`Concurrent message ${index}`);
+        expect(memory).toBeTruthy();
+        expect(memory?.id).toBeTruthy();
+        expect(memory?.searchText).toContain(`Concurrent message ${index}`);
       });
 
       // Verify all in database
@@ -389,19 +410,25 @@ describe('MemoryFormationService - Real Database Integration', () => {
     });
 
     it('should properly handle memory consolidation initialization', async () => {
-      const memory = await service.createMemoryFromMessage(testData.persona.id, {
-        role: 'user',
-        content: 'This memory should have consolidation tracking.',
-      });
+      const memories = await service.createMemoriesFromConversation(testData.persona.id, [
+        {
+          role: 'user',
+          content: 'This memory should have consolidation tracking.',
+        },
+      ]);
+      const memory = memories[0];
+      expect(memory).toBeTruthy();
 
       // Check consolidation record was created
       const prisma = getTestPrisma();
       const consolidation = await prisma.memoryConsolidation.findUnique({
-        where: { memoryId: memory.id },
+        where: { memoryId: memory?.id || '' },
       });
 
       expect(consolidation).toBeTruthy();
-      expect(consolidation?.memoryId).toBe(memory.id);
+      if (memory?.id) {
+        expect(consolidation?.memoryId).toBe(memory.id);
+      }
       expect(consolidation?.initialStrength).toBe(1.0);
       expect(consolidation?.currentStrength).toBeGreaterThan(0);
       expect(consolidation?.currentStrength).toBeLessThanOrEqual(1);

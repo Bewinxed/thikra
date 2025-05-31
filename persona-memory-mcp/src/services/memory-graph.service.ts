@@ -121,7 +121,7 @@ export class MemoryGraphService {
       allAssociations.map(async (assoc) => ({
         ...assoc,
         isMeaningful: await this.isAssociationMeaningfulForRetrieval(assoc),
-      }))
+      })),
     );
 
     const strongAssociations = meaningfulAssociations
@@ -182,7 +182,7 @@ export class MemoryGraphService {
       similarMemories.map(async (m) => ({
         ...m,
         isMeaningful: await this.isSimilarityMeaningfulForLLM(m.similarity, memory.id),
-      }))
+      })),
     );
 
     return meaningfulMemories
@@ -206,6 +206,13 @@ export class MemoryGraphService {
       return [];
     }
 
+    // Calculate data-driven temporal window
+    const temporalWindowSeconds = await this.getTemporalWindowSeconds({
+      memoryType: memory.memoryType,
+      significanceScore: memory.significanceScore,
+      personaId: memory.personaId,
+    });
+
     // Use PostgreSQL to calculate temporal proximity and strength
     const temporalMemories = await this.prisma.$queryRaw<
       Array<{
@@ -217,12 +224,12 @@ export class MemoryGraphService {
       SELECT 
         m.id,
         ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / 3600.0 as time_diff_hours,
-        GREATEST(0, 1 - (ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / ${this.getTemporalWindowSeconds(memory)})) as temporal_strength
+        GREATEST(0, 1 - (ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) / ${temporalWindowSeconds})) as temporal_strength
       FROM "Memory" m
       WHERE m."personaId" = ${memory.personaId}::uuid
         AND m.id != ${memory.id}::uuid
         AND m."occurredAt" IS NOT NULL
-        AND ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) <= ${this.getTemporalWindowSeconds(memory)}
+        AND ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) <= ${temporalWindowSeconds}
       ORDER BY ABS(EXTRACT(EPOCH FROM (m."occurredAt" - ${memory.occurredAt}::timestamp))) ASC
       LIMIT 20
     `;
@@ -256,7 +263,9 @@ export class MemoryGraphService {
           components: {
             some: {
               emotionTypeId: { in: dominantEmotions },
-              intensity: { gte: this.getMinimumEmotionalIntensityForContext() }, // Emotionally significant for LLM context
+              intensity: {
+                gte: await this.getMinimumEmotionalIntensityForContext(memory.personaId),
+              }, // Emotionally significant for LLM context
             },
           },
         },
@@ -318,13 +327,18 @@ export class MemoryGraphService {
     const associations = [];
 
     // Add forward references (this -> other)
+    const referenceStrength = await this.getReferenceStrengthForLLM(memory.personaId);
     for (const refMemory of referencedMemories) {
-      associations.push(this.createAssociation(memory.id, refMemory.id, 'reference', this.getReferenceStrengthForLLM()));
+      associations.push(
+        this.createAssociation(memory.id, refMemory.id, 'reference', referenceStrength),
+      );
     }
 
     // Add backward references (other -> this)
     for (const refMemory of referencingMemories) {
-      associations.push(this.createAssociation(refMemory.id, memory.id, 'reference', this.getReferenceStrengthForLLM()));
+      associations.push(
+        this.createAssociation(refMemory.id, memory.id, 'reference', referenceStrength),
+      );
     }
 
     return associations;
@@ -350,18 +364,27 @@ export class MemoryGraphService {
       path: string[];
     }>
   > {
-    const { 
-      memoryId, 
-      limit = this.getDefaultRelatedMemoryLimit(), 
-      minStrength = this.getDefaultAssociationStrengthForRetrieval(), 
-      associationTypes 
-    } = params;
+    const { memoryId, limit, minStrength, associationTypes } = params;
+
+    // Get memory to determine persona
+    const memory = await this.prisma.memory.findUnique({
+      where: { id: memoryId },
+      select: { personaId: true },
+    });
+
+    if (!memory) {
+      throw new Error(`Memory ${memoryId} not found`);
+    }
+
+    const effectiveLimit = limit || (await this.getDefaultRelatedMemoryLimit(memory.personaId));
+    const effectiveMinStrength =
+      minStrength || (await this.getDefaultAssociationStrengthForRetrieval(memory.personaId));
 
     // Get direct associations
     const associations = await this.prisma.memoryAssociation.findMany({
       where: {
         OR: [{ memoryA: memoryId }, { memoryB: memoryId }],
-        associationStrength: { gte: minStrength },
+        associationStrength: { gte: effectiveMinStrength },
         ...(associationTypes && { associationType: { in: associationTypes } }),
       },
       include: {
@@ -369,7 +392,7 @@ export class MemoryGraphService {
         memoryBRelation: true,
       },
       orderBy: { associationStrength: 'desc' },
-      take: limit,
+      take: effectiveLimit,
     });
 
     return associations.map((assoc) => {
@@ -399,6 +422,18 @@ export class MemoryGraphService {
       types: string[];
     }>
   > {
+    // Get default strength threshold for this memory
+    const startMemory = await this.prisma.memory.findUnique({
+      where: { id: startMemoryId },
+      select: { personaId: true },
+    });
+
+    if (!startMemory) {
+      return [];
+    }
+
+    const minStrength = await this.getDefaultAssociationStrengthForRetrieval(startMemory.personaId);
+
     // Use recursive CTE to find paths
     const paths = await this.prisma.$queryRaw<
       Array<{ path: string; strength: number; types: string }>
@@ -421,7 +456,7 @@ export class MemoryGraphService {
           1 as depth
         FROM "memory_associations"
         WHERE ("memoryA" = ${startMemoryId}::uuid OR "memoryB" = ${startMemoryId}::uuid)
-          AND "associationStrength" >= ${this.getDefaultAssociationStrengthForRetrieval()}
+          AND "associationStrength" >= ${minStrength}
         
         UNION ALL
         
@@ -447,7 +482,7 @@ export class MemoryGraphService {
             WHEN ma."memoryA" = mp.current_memory::uuid THEN ma."memoryB"::text
             ELSE ma."memoryA"::text
           END = ANY(mp.path))
-          AND ma."associationStrength" >= ${this.getDefaultAssociationStrengthForRetrieval()}
+          AND ma."associationStrength" >= ${minStrength}
       )
       SELECT array_to_string(path, ',') as path, strength, array_to_string(types, ',') as types
       FROM memory_paths 
@@ -515,7 +550,7 @@ export class MemoryGraphService {
         FROM memory_clusters mc
         JOIN "memory_associations" ma ON 
           (ma."memoryA" = mc.memory_id OR ma."memoryB" = mc.memory_id)
-        WHERE ma."associationStrength" >= ${this.getStrongAssociationThresholdForLLM()}
+        WHERE ma."associationStrength" >= ${await this.getStrongAssociationThresholdForLLM(personaId)}
           AND mc.cluster_size < 10
           AND mc.memory_path NOT LIKE '%' || CASE 
             WHEN ma."memoryA" = mc.memory_id THEN ma."memoryB"
@@ -589,7 +624,7 @@ export class MemoryGraphService {
           AND m2."personaId" = ${personaId}::uuid
           AND ma."associationType" = 'temporal'
           AND m1."occurredAt" < m2."occurredAt"
-          AND m2."occurredAt" - m1."occurredAt" <= INTERVAL '${this.getDefaultTemporalChainWindowHours()} hours'
+          AND m2."occurredAt" - m1."occurredAt" <= INTERVAL '${await this.getDefaultTemporalChainWindowHours(personaId)} hours'
       ),
       extended_chains AS (
         SELECT 
@@ -602,7 +637,7 @@ export class MemoryGraphService {
         JOIN "Memory" m3 ON ma2."memoryB" = m3.id
         WHERE ma2."associationType" = 'temporal'
           AND m3."occurredAt" > tc.end_time
-          AND m3."occurredAt" - tc.end_time <= INTERVAL '${this.getDefaultTemporalChainWindowHours()} hours'
+          AND m3."occurredAt" - tc.end_time <= INTERVAL '${await this.getDefaultTemporalChainWindowHours(personaId)} hours'
       )
       SELECT 
         ROW_NUMBER() OVER (ORDER BY array_length(chain, 1) DESC, start_time) as chain_id,
@@ -789,11 +824,14 @@ export class MemoryGraphService {
     memoryA: string;
     memoryB: string;
     strength: number;
-    type: string;
+    associationType: string;
   }): Promise<boolean> {
     // Get data-driven threshold for this association type
-    const minStrength = await this.getAssociationThresholdByType(assoc.type, assoc.memoryA);
-    
+    const minStrength = await this.getAssociationThresholdByType(
+      assoc.associationType,
+      assoc.memoryA,
+    );
+
     // Only keep associations that would provide meaningful context
     return assoc.strength >= minStrength;
   }
@@ -805,7 +843,7 @@ export class MemoryGraphService {
   private async isSimilarityMeaningfulForLLM(distance: number, memoryId: string): Promise<boolean> {
     // Get data-driven similarity bounds for this persona
     const bounds = await this.calculateSimilarityBounds(memoryId);
-    
+
     // pgvector distance: 0 = identical, 2 = orthogonal
     // Exclude near-duplicates (too similar) and irrelevant memories (too dissimilar)
     return distance >= bounds.minDistance && distance <= bounds.maxDistance;
@@ -814,23 +852,76 @@ export class MemoryGraphService {
   /**
    * Determine appropriate temporal window for LLM context based on memory characteristics
    * Different types of memories have different relevant time windows for conversation context
+   * Research: Temporal association patterns by memory type (Conway & Pleydell-Pearce, 2000)
    */
-  private getTemporalWindowSeconds(memory: { memoryType?: string; significanceScore?: number }): number {
-    // Base windows in seconds optimized for LLM conversation context
-    const baseWindows = {
-      episodic: 48 * 3600,   // 48 hours - personal experiences stay relevant longer
-      semantic: 7 * 24 * 3600, // 7 days - facts/knowledge have broader temporal relevance  
-      procedural: 24 * 3600,   // 24 hours - how-to memories are situationally relevant
-    };
+  private async getTemporalWindowSeconds(memory: {
+    memoryType?: string;
+    significanceScore?: number;
+    personaId: string;
+  }): Promise<number> {
+    // Calculate data-driven base windows from successful temporal associations
+    const baseWindow = await this.calculateTemporalWindowByType(
+      memory.memoryType || 'episodic',
+      memory.personaId,
+    );
 
-    const baseWindow = baseWindows[memory.memoryType as keyof typeof baseWindows] || 24 * 3600;
-    
     // Adjust window based on memory significance for LLM context
     // More significant memories have wider temporal relevance in conversations
-    const significanceMultiplier = memory.significanceScore ? 
-      (0.5 + memory.significanceScore) : 1.0; // Range: 0.5x to 1.5x
-    
+    const significanceMultiplier = memory.significanceScore ? 0.5 + memory.significanceScore : 1.0; // Range: 0.5x to 1.5x
+
     return Math.floor(baseWindow * significanceMultiplier);
+  }
+
+  /**
+   * Calculate temporal window by memory type from successful association patterns
+   * Research: Different memory types have different optimal temporal association windows
+   */
+  private async calculateTemporalWindowByType(
+    memoryType: string,
+    personaId: string,
+  ): Promise<number> {
+    // Query successful temporal associations by memory type
+    const temporalAssociations = await this.prisma.$queryRaw<
+      {
+        avg_gap_seconds: number;
+        sample_count: number;
+      }[]
+    >`
+      WITH temporal_gaps AS (
+        SELECT 
+          ABS(EXTRACT(EPOCH FROM (mb_mem."occurredAt" - ma_mem."occurredAt"))) as gap_seconds
+        FROM "memory_associations" ma
+        JOIN "Memory" ma_mem ON ma_mem.id = ma."memoryA"
+        JOIN "Memory" mb_mem ON mb_mem.id = ma."memoryB"
+        WHERE ma."associationType" = 'temporal'
+          AND ma_mem."personaId" = ${personaId}::uuid
+          AND ma_mem."memoryType" = ${memoryType}
+          AND ma_mem."accessCount" > 0
+          AND mb_mem."accessCount" > 0
+          AND ma_mem."occurredAt" IS NOT NULL
+          AND mb_mem."occurredAt" IS NOT NULL
+        LIMIT 50
+      )
+      SELECT 
+        PERCENTILE_CONT(0.8) WITHIN GROUP (ORDER BY gap_seconds) as avg_gap_seconds,
+        COUNT(*)::int as sample_count
+      FROM temporal_gaps
+    `;
+
+    if (temporalAssociations.length === 0 || temporalAssociations[0]?.sample_count === 0) {
+      // Research-based fallbacks from Conway & Pleydell-Pearce (2000) episodic memory model
+      const fallbackWindows: Record<string, number> = {
+        episodic: 48 * 3600, // 48 hours - personal experiences
+        semantic: 7 * 24 * 3600, // 7 days - facts/knowledge
+        procedural: 24 * 3600, // 24 hours - how-to memories
+      };
+      return fallbackWindows[memoryType] || 24 * 3600;
+    }
+
+    const windowSeconds = temporalAssociations[0]?.avg_gap_seconds || 24 * 3600;
+
+    // Constrain to reasonable bounds (1 hour to 30 days)
+    return Math.min(Math.max(windowSeconds, 3600), 30 * 24 * 3600);
   }
 
   /**
@@ -844,15 +935,15 @@ export class MemoryGraphService {
       where: {
         personaId,
         accessCount: { gt: 0 },
-        emotionalStateId: { not: null }
+        emotionalStateId: { not: null },
       },
       include: {
         emotionalState: {
           include: {
-            components: true
-          }
-        }
-      }
+            components: true,
+          },
+        },
+      },
     });
 
     if (accessedEmotionalMemories.length === 0) {
@@ -877,8 +968,8 @@ export class MemoryGraphService {
 
     // Calculate 50th percentile of accessed emotional intensities
     intensities.sort((a, b) => a - b);
-    const median = intensities[Math.floor(intensities.length / 2)];
-    
+    const median = intensities[Math.floor(intensities.length / 2)] || 0.3;
+
     // Return threshold with safety bounds
     return Math.max(0.3, Math.min(0.8, median));
   }
@@ -895,16 +986,16 @@ export class MemoryGraphService {
         associationType: 'reference',
         memoryARelation: {
           personaId,
-          accessCount: { gt: 0 }
+          accessCount: { gt: 0 },
         },
         memoryBRelation: {
           personaId,
-          accessCount: { gt: 0 }
-        }
+          accessCount: { gt: 0 },
+        },
       },
       select: {
-        associationStrength: true
-      }
+        associationStrength: true,
+      },
     });
 
     if (referenceAssociations.length === 0) {
@@ -912,9 +1003,9 @@ export class MemoryGraphService {
     }
 
     // Calculate 75th percentile of successful reference strengths using simple-statistics
-    const strengths = referenceAssociations.map(a => a.associationStrength);
+    const strengths = referenceAssociations.map((a) => a.associationStrength);
     const calculatedThreshold = ss.quantile(strengths, 0.75);
-    
+
     // Return threshold with safety bounds
     return Math.max(0.7, Math.min(0.95, calculatedThreshold));
   }
@@ -929,18 +1020,18 @@ export class MemoryGraphService {
     const memoryAssociationCounts = await this.prisma.memory.findMany({
       where: {
         personaId,
-        accessCount: { gt: 1 } // Frequently accessed memories
+        accessCount: { gt: 1 }, // Frequently accessed memories
       },
       select: {
         id: true,
         accessCount: true,
         associationsFrom: {
-          select: { id: true }
+          select: { id: true },
         },
         associationsTo: {
-          select: { id: true }
-        }
-      }
+          select: { id: true },
+        },
+      },
     });
 
     if (memoryAssociationCounts.length === 0) {
@@ -948,8 +1039,8 @@ export class MemoryGraphService {
     }
 
     // Calculate total associations per memory
-    const associationCounts = memoryAssociationCounts.map(memory => 
-      memory.associationsFrom.length + memory.associationsTo.length
+    const associationCounts = memoryAssociationCounts.map(
+      (memory) => memory.associationsFrom.length + memory.associationsTo.length,
     );
 
     if (associationCounts.length === 0) {
@@ -958,8 +1049,8 @@ export class MemoryGraphService {
 
     // Calculate median number of associations for frequently accessed memories
     associationCounts.sort((a, b) => a - b);
-    const medianCount = associationCounts[Math.floor(associationCounts.length / 2)];
-    
+    const medianCount = associationCounts[Math.floor(associationCounts.length / 2)] || 8;
+
     // Constrain to 5-15 range per research bounds
     return Math.min(Math.max(medianCount, 5), 15);
   }
@@ -975,16 +1066,16 @@ export class MemoryGraphService {
       where: {
         memoryARelation: {
           personaId,
-          accessCount: { gt: 0 }
+          accessCount: { gt: 0 },
         },
         memoryBRelation: {
           personaId,
-          accessCount: { gt: 0 }
-        }
+          accessCount: { gt: 0 },
+        },
       },
       select: {
-        associationStrength: true
-      }
+        associationStrength: true,
+      },
     });
 
     if (successfulAssociations.length === 0) {
@@ -992,9 +1083,9 @@ export class MemoryGraphService {
     }
 
     // Calculate 30th percentile of successful association strengths using simple-statistics
-    const strengths = successfulAssociations.map(a => a.associationStrength);
+    const strengths = successfulAssociations.map((a) => a.associationStrength);
     const calculatedThreshold = ss.quantile(strengths, 0.3);
-    
+
     // Return threshold with safety bounds
     return Math.max(0.2, Math.min(0.6, calculatedThreshold));
   }
@@ -1011,16 +1102,16 @@ export class MemoryGraphService {
         associationStrength: { gt: 0.5 },
         memoryARelation: {
           personaId,
-          accessCount: { gt: 0 }
+          accessCount: { gt: 0 },
         },
         memoryBRelation: {
           personaId,
-          accessCount: { gt: 0 }
-        }
+          accessCount: { gt: 0 },
+        },
       },
       select: {
-        associationStrength: true
-      }
+        associationStrength: true,
+      },
     });
 
     if (highStrengthAssociations.length === 0) {
@@ -1028,9 +1119,9 @@ export class MemoryGraphService {
     }
 
     // Calculate 75th percentile of existing strong associations using simple-statistics
-    const strengths = highStrengthAssociations.map(a => a.associationStrength);
+    const strengths = highStrengthAssociations.map((a) => a.associationStrength);
     const calculatedThreshold = ss.quantile(strengths, 0.75);
-    
+
     // Return threshold with safety bounds
     return Math.max(0.6, Math.min(0.9, calculatedThreshold));
   }
@@ -1047,21 +1138,21 @@ export class MemoryGraphService {
         associationType: 'temporal',
         memoryARelation: {
           personaId,
-          accessCount: { gt: 0 }
+          accessCount: { gt: 0 },
         },
         memoryBRelation: {
           personaId,
-          accessCount: { gt: 0 }
-        }
+          accessCount: { gt: 0 },
+        },
       },
       include: {
         memoryARelation: {
-          select: { occurredAt: true }
+          select: { occurredAt: true },
         },
         memoryBRelation: {
-          select: { occurredAt: true }
-        }
-      }
+          select: { occurredAt: true },
+        },
+      },
     });
 
     if (temporalAssociations.length === 0) {
@@ -1073,7 +1164,7 @@ export class MemoryGraphService {
     for (const assoc of temporalAssociations) {
       const timeA = assoc.memoryARelation.occurredAt;
       const timeB = assoc.memoryBRelation.occurredAt;
-      
+
       if (timeA && timeB) {
         const gapMs = Math.abs(timeB.getTime() - timeA.getTime());
         const gapHours = gapMs / (1000 * 60 * 60);
@@ -1087,7 +1178,7 @@ export class MemoryGraphService {
 
     // Calculate 80th percentile of successful temporal gaps using simple-statistics
     const calculatedWindow = ss.quantile(timeGapsHours, 0.8);
-    
+
     // Constrain to 12-72 hours per research bounds
     return Math.min(Math.max(calculatedWindow, 12), 72);
   }
@@ -1096,13 +1187,16 @@ export class MemoryGraphService {
    * Calculate data-driven association threshold by type
    * Research: Graph clustering and meaningful connection thresholds
    */
-  private async getAssociationThresholdByType(associationType: string, memoryId: string): Promise<number> {
+  private async getAssociationThresholdByType(
+    associationType: string,
+    memoryId: string,
+  ): Promise<number> {
     // Get the persona ID from the memory
     const memory = await this.prisma.memory.findUnique({
       where: { id: memoryId },
-      select: { personaId: true }
+      select: { personaId: true },
     });
-    
+
     if (!memory) {
       // Fallback to conservative threshold
       return 0.4;
@@ -1113,31 +1207,31 @@ export class MemoryGraphService {
       where: {
         associationType,
         OR: [
-          { memoryA: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } },
-          { memoryB: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } }
-        ]
+          { memoryARelation: { personaId: memory.personaId, accessCount: { gt: 0 } } },
+          { memoryBRelation: { personaId: memory.personaId, accessCount: { gt: 0 } } },
+        ],
       },
       select: { associationStrength: true },
       take: 100,
-      orderBy: { associationStrength: 'asc' }
+      orderBy: { associationStrength: 'asc' },
     });
 
     if (successfulAssociations.length === 0) {
       // Research-based fallbacks by association type
       const fallbackThresholds: Record<string, number> = {
-        temporal: 0.2,     // Temporal connections valuable even if weak
-        semantic: 0.4,     // Semantic similarity needs moderate strength
-        emotional: 0.3,    // Emotional connections moderately valuable
-        causal: 0.5,       // Causal relationships need strong evidence
-        reference: 0.8,    // Reference/mention connections need high confidence
+        temporal: 0.2, // Temporal connections valuable even if weak
+        semantic: 0.4, // Semantic similarity needs moderate strength
+        emotional: 0.3, // Emotional connections moderately valuable
+        causal: 0.5, // Causal relationships need strong evidence
+        reference: 0.8, // Reference/mention connections need high confidence
       };
       return fallbackThresholds[associationType] || 0.3;
     }
 
     // Use 25th percentile of successful association strengths using simple-statistics
-    const strengths = successfulAssociations.map(a => a.associationStrength);
+    const strengths = successfulAssociations.map((a) => a.associationStrength);
     const threshold = ss.quantile(strengths, 0.25);
-    
+
     // Apply minimum threshold to avoid noise
     return Math.max(0.1, threshold);
   }
@@ -1146,13 +1240,15 @@ export class MemoryGraphService {
    * Calculate data-driven similarity bounds for meaningful associations
    * Research: Embedding similarity thresholds for semantic memory retrieval
    */
-  private async calculateSimilarityBounds(memoryId: string): Promise<{ minDistance: number; maxDistance: number }> {
+  private async calculateSimilarityBounds(
+    memoryId: string,
+  ): Promise<{ minDistance: number; maxDistance: number }> {
     // Get the persona ID from the memory
     const memory = await this.prisma.memory.findUnique({
       where: { id: memoryId },
-      select: { personaId: true }
+      select: { personaId: true },
     });
-    
+
     if (!memory) {
       // Conservative fallback bounds
       return { minDistance: 0.1, maxDistance: 1.2 };
@@ -1163,15 +1259,15 @@ export class MemoryGraphService {
       where: {
         associationType: 'semantic',
         OR: [
-          { memoryA: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } },
-          { memoryB: { persona: { id: memory.personaId }, accessCount: { gt: 0 } } }
-        ]
+          { memoryARelation: { personaId: memory.personaId, accessCount: { gt: 0 } } },
+          { memoryBRelation: { personaId: memory.personaId, accessCount: { gt: 0 } } },
+        ],
       },
       include: {
-        memoryA: { select: { embedding: true } },
-        memoryB: { select: { embedding: true } }
+        memoryARelation: true,
+        memoryBRelation: true,
       },
-      take: 100
+      take: 100,
     });
 
     if (successfulSemanticAssocs.length === 0) {
@@ -1180,15 +1276,17 @@ export class MemoryGraphService {
     }
 
     // Use PostgreSQL to calculate distance bounds with percentiles
-    const distanceQuery = await this.prisma.$queryRaw<{
-      min_distance: number;
-      max_distance: number;
-      sample_count: number;
-    }[]>`
+    const distanceQuery = await this.prisma.$queryRaw<
+      {
+        min_distance: number;
+        max_distance: number;
+        sample_count: number;
+      }[]
+    >`
       WITH semantic_distances AS (
         SELECT 
           (ma_mem.embedding <=> mb_mem.embedding) as distance
-        FROM "MemoryAssociation" ma
+        FROM "memory_associations" ma
         JOIN "Memory" ma_mem ON ma_mem.id = ma."memoryA"
         JOIN "Memory" mb_mem ON mb_mem.id = ma."memoryB"
         WHERE ma."associationType" = 'semantic'
@@ -1212,10 +1310,10 @@ export class MemoryGraphService {
     }
 
     const stats = distanceQuery[0];
-    // Use 5th and 95th percentiles for similarity bounds 
+    // Use 5th and 95th percentiles for similarity bounds
     const minDistance = Math.max(0.05, stats?.min_distance || 0.1);
     const maxDistance = Math.min(1.5, stats?.max_distance || 1.2);
-    
+
     return { minDistance, maxDistance };
   }
 }

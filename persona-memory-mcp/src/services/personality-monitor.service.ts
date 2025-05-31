@@ -158,6 +158,12 @@ export class PersonalityMonitorService {
       orderBy: { observedAt: 'asc' },
     });
 
+    // Skip parameter estimation if we don't have enough observations
+    // PersDyn model requires at least 3 observations to estimate attractor force
+    if (allObservations.length < 3) {
+      return; // Not enough data for meaningful parameter estimation yet
+    }
+
     // Calculate new parameters using Bayesian estimation
     const { baseline, variability, attractorForce, uncertainties } =
       this.estimateParameters(allObservations);
@@ -564,18 +570,18 @@ export class PersonalityMonitorService {
    * Uses statistical power analysis and data-driven variance thresholds
    */
   private async hasStatisticallySignificantData(
-    observations: PersonalityObservation[], 
-    personaId: string
+    observations: PersonalityObservation[],
+    personaId: string,
   ): Promise<boolean> {
     // Statistical power analysis: Need minimum sample size for meaningful analysis
     const minSampleSize = await this.calculateMinimumSampleSize(personaId);
     if (observations.length < minSampleSize) return false;
-    
+
     // Data-driven variance significance test
     const varianceThreshold = await this.calculateVarianceSignificanceThreshold(personaId);
-    const values = observations.map(obs => obs.observedValue);
+    const values = observations.map((obs) => obs.observedValue);
     const variance = this.calculateVariance(values);
-    
+
     return variance > varianceThreshold;
   }
 
@@ -587,16 +593,16 @@ export class PersonalityMonitorService {
     // Query existing trait patterns that led to meaningful insights
     const meaningfulPatterns = await this.prisma.personalityObservation.groupBy({
       by: ['traitDimension'],
-      where: { 
+      where: {
         personaId,
-        confidence: { gt: 0.5 } // Patterns that were considered reliable
+        confidence: { gt: 0.5 }, // Patterns that were considered reliable
       },
       _count: {
-        id: true
+        id: true,
       },
       having: {
-        id: { _count: { gt: 1 } }
-      }
+        id: { _count: { gt: 1 } },
+      },
     });
 
     if (meaningfulPatterns.length === 0) {
@@ -605,9 +611,9 @@ export class PersonalityMonitorService {
     }
 
     // Calculate median sample size from patterns that proved meaningful using simple-statistics
-    const sampleSizes = meaningfulPatterns.map(p => p._count.id);
+    const sampleSizes = meaningfulPatterns.map((p) => p._count.id);
     const medianSampleSize = ss.median(sampleSizes);
-    
+
     // Constrain to research bounds (3-10 observations for personality trait analysis)
     return Math.min(Math.max(medianSampleSize, 3), 10);
   }
@@ -620,10 +626,10 @@ export class PersonalityMonitorService {
     // Query variance distribution from existing trait observations
     const allObservations = await this.prisma.personalityObservation.findMany({
       where: { personaId },
-      select: { 
-        traitDimension: true, 
-        observedValue: true 
-      }
+      select: {
+        traitDimension: true,
+        observedValue: true,
+      },
     });
 
     if (allObservations.length === 0) {
@@ -657,7 +663,7 @@ export class PersonalityMonitorService {
     // Use 10th percentile of observed variances as threshold using simple-statistics
     // This ensures we only consider truly non-varying data as insignificant
     const percentile10 = ss.quantile(variances, 0.1);
-    
+
     // Constrain to reasonable bounds for personality traits (0.0001 to 0.01)
     return Math.min(Math.max(percentile10, 0.0001), 0.01);
   }
@@ -675,19 +681,19 @@ export class PersonalityMonitorService {
    * Research: Personality trait change detection using standardized effect sizes
    */
   private async calculateTraitChangeSignificanceThreshold(
-    values: number[], 
-    personaId: string, 
-    traitDimension: string
+    values: number[],
+    personaId: string,
+    traitDimension: string,
   ): Promise<number> {
     // Query historical trait changes that correlated with meaningful behavioral patterns
     const meaningfulChanges = await this.prisma.personalityObservation.findMany({
       where: {
         personaId,
         traitDimension,
-        confidence: { gt: 0.6 } // Changes that were considered reliable
+        confidence: { gt: 0.6 }, // Changes that were considered reliable
       },
       orderBy: { observedAt: 'asc' },
-      take: 50 // Recent trait change history
+      take: 50, // Recent trait change history
     });
 
     if (meaningfulChanges.length < 3) {
@@ -700,9 +706,13 @@ export class PersonalityMonitorService {
     // Calculate actual change magnitudes that proved meaningful
     const changeAmplitudes: number[] = [];
     for (let i = 1; i < meaningfulChanges.length; i++) {
-      const change = Math.abs(meaningfulChanges[i].observedValue - meaningfulChanges[i - 1].observedValue);
-      if (change > 0) {
-        changeAmplitudes.push(change);
+      const current = meaningfulChanges[i];
+      const previous = meaningfulChanges[i - 1];
+      if (current && previous) {
+        const change = Math.abs(current.observedValue - previous.observedValue);
+        if (change > 0) {
+          changeAmplitudes.push(change);
+        }
       }
     }
 
@@ -711,7 +721,7 @@ export class PersonalityMonitorService {
       const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
       const stdDev = Math.sqrt(this.calculateVariance(values));
       const cv = stdDev / Math.abs(mean);
-      
+
       // Use empirically validated multiplier for personality traits (Roberts & DelVecchio, 2000)
       return Math.max(0.01, cv * 0.15); // 15% of CV based on personality stability research
     }
@@ -719,7 +729,7 @@ export class PersonalityMonitorService {
     // Use 25th percentile of meaningful changes as threshold using simple-statistics
     // This ensures we detect changes that historically proved significant
     const percentile25 = ss.quantile(changeAmplitudes, 0.25);
-    
+
     // Constrain to reasonable bounds for personality traits (0.01 to 0.2)
     return Math.min(Math.max(percentile25, 0.01), 0.2);
   }
@@ -731,18 +741,18 @@ export class PersonalityMonitorService {
   private hasEnoughDataForCycleDetection(observations: PersonalityObservation[]): boolean {
     // Need minimum data for 2 complete cycles (at least 4 points)
     if (observations.length < 4) return false;
-    
+
     // Check if data has meaningful variance for cycle detection
-    const values = observations.map(obs => obs.observedValue);
+    const values = observations.map((obs) => obs.observedValue);
     const variance = this.calculateVariance(values);
-    
+
     // Need sufficient variance to detect meaningful oscillations
     return variance > 0.01; // Higher threshold than trend detection
   }
 
   private async detectTrend(
-    observations: PersonalityObservation[], 
-    personaId: string
+    observations: PersonalityObservation[],
+    personaId: string,
   ): Promise<string | null> {
     if (!(await this.hasStatisticallySignificantData(observations, personaId))) return null;
 
@@ -762,11 +772,11 @@ export class PersonalityMonitorService {
     // Use data-driven significance threshold based on historical trait changes
     const traitDimension = observations[0]?.traitDimension || 'unknown';
     const significanceThreshold = await this.calculateTraitChangeSignificanceThreshold(
-      y, 
-      personaId, 
-      traitDimension
+      y,
+      personaId,
+      traitDimension,
     );
-    
+
     if (avgChange < significanceThreshold) return null; // No statistically significant trend
 
     return slope > 0 ? 'increasing' : 'decreasing';
@@ -801,8 +811,10 @@ export class PersonalityMonitorService {
     // Use statistical threshold: oscillation if more than random chance
     // Random alternation would be ~0.5, so we look for significantly higher rates
     const randomExpectation = 0.5;
-    const significanceThreshold = randomExpectation + Math.sqrt(randomExpectation * (1 - randomExpectation) / diffs.length) * 2; // 2 standard deviations
-    
+    const significanceThreshold =
+      randomExpectation +
+      Math.sqrt((randomExpectation * (1 - randomExpectation)) / diffs.length) * 2; // 2 standard deviations
+
     if (alternationRate > significanceThreshold) {
       return {
         type: 'oscillating',
@@ -872,8 +884,8 @@ export class PersonalityMonitorService {
 
       // Use statistical threshold based on sample size and variance
       // Higher consistency required for smaller samples (more conservative)
-      const consistencyThreshold = Math.max(0.5, 1 - (2 / Math.sqrt(values.length))); // Adaptive threshold
-      
+      const consistencyThreshold = Math.max(0.5, 1 - 2 / Math.sqrt(values.length)); // Adaptive threshold
+
       if (consistency > consistencyThreshold) {
         patterns.push({
           context,
@@ -889,22 +901,22 @@ export class PersonalityMonitorService {
 
   private calculatePatternConfidence(observations: PersonalityObservation[]): number {
     const n = observations.length;
-    
+
     // Calculate confidence using statistical power formula
     // Confidence increases with sample size but with diminishing returns
     // Based on statistical power analysis for personality trait detection
     const statisticalPower = 1 - Math.exp(-n / 15); // Power approaches 1 asymptotically
-    
+
     // Adjust for variance in observations (higher variance = lower confidence)
-    const values = observations.map(o => o.observedValue);
+    const values = observations.map((o) => o.observedValue);
     const variance = this.calculateVariance(values);
     const normalizedVariance = Math.min(variance, 1); // Cap at 1 for normalization
     const variancePenalty = Math.max(0, 1 - normalizedVariance); // Lower variance = higher confidence
-    
+
     // Combine individual observation confidence scores
-    const avgObservationConfidence = 
+    const avgObservationConfidence =
       observations.reduce((sum, o) => sum + o.confidence, 0) / observations.length;
-    
+
     // Final confidence combines statistical power, variance stability, and observation quality
     return (statisticalPower * variancePenalty + avgObservationConfidence) / 2;
   }

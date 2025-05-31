@@ -216,7 +216,7 @@ export class MemoryFormationService {
 
     // Detect and create emotional state if content has emotional content
     let emotionalStateId: string | null = null;
-    if (contentType === 'text' && this.hasEmotionalContent(content)) {
+    if (contentType === 'text' && (await this.hasEmotionalContent(content))) {
       const emotionAnalysis = await this.detectEmotions(content);
       if (
         emotionAnalysis.primaryEmotions.length > 0 ||
@@ -533,7 +533,7 @@ export class MemoryFormationService {
     // Use temporal proximity - entities from recent memories are more likely relevant
     // Calculate data-driven recency window based on successful memory associations
     const recentWindowMs = await this.calculateRecentMemoryWindow(channel);
-    
+
     const recentMemories = await this.prisma.memory.findMany({
       where: {
         channel,
@@ -591,29 +591,29 @@ export class MemoryFormationService {
             });
 
             const relevanceAnalysis = await b.CalculateEntityRelevance(entityInfo, query);
-            
+
             // Apply recency boost to LLM score if entity was recently active
             let finalScore = relevanceAnalysis.relevanceScore;
             if (recentEntityIds.has(entity.id)) {
               finalScore = Math.min(1.0, finalScore * 1.2); // 20% boost for recent activity
             }
 
-            return { 
-              entity, 
+            return {
+              entity,
               score: finalScore,
-              reasoning: relevanceAnalysis.reasoning 
+              reasoning: relevanceAnalysis.reasoning,
             };
           } catch (error) {
             console.error(`Failed to analyze entity relevance for ${entity.name}:`, error);
             // Use fallback scoring only for recent activity to avoid complete failure
             const score = recentEntityIds.has(entity.id) ? 0.7 : 0.1;
-            return { 
-              entity, 
-              score, 
-              reasoning: 'Fallback scoring due to LLM failure' 
+            return {
+              entity,
+              score,
+              reasoning: 'Fallback scoring due to LLM failure',
             };
           }
-        })
+        }),
       );
 
       const filteredEntities = scoredEntities
@@ -1159,7 +1159,7 @@ export class MemoryFormationService {
       content: memory.searchText,
       significance: memory.significanceScore,
       type: memory.memoryType,
-      age: Date.now() - memory.occurredAt.getTime(),
+      age: memory.occurredAt ? Date.now() - memory.occurredAt.getTime() : 0,
       strength: memory.memoryStrength,
     });
 
@@ -1176,19 +1176,20 @@ export class MemoryFormationService {
     const successfulAssociations = await this.prisma.memoryAssociation.findMany({
       where: {
         associationType: 'temporal',
-        associationStrength: { gt: 0.5 } // Associations that proved meaningful
+        associationStrength: { gt: 0.5 }, // Associations that proved meaningful
       },
       include: {
-        memoryA: { select: { occurredAt: true, channel: true } },
-        memoryB: { select: { occurredAt: true, channel: true } }
+        memoryARelation: { select: { occurredAt: true, channel: true } },
+        memoryBRelation: { select: { occurredAt: true, channel: true } },
       },
       take: 100,
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
 
     // Filter associations from the same channel
-    const channelAssociations = successfulAssociations.filter(assoc => 
-      assoc.memoryA.channel === channel || assoc.memoryB.channel === channel
+    const channelAssociations = successfulAssociations.filter(
+      (assoc) =>
+        assoc.memoryARelation.channel === channel || assoc.memoryBRelation.channel === channel,
     );
 
     if (channelAssociations.length === 0) {
@@ -1199,11 +1200,13 @@ export class MemoryFormationService {
     // Calculate time gaps between successfully associated memories
     const timeGaps: number[] = [];
     for (const assoc of channelAssociations) {
-      const gap = Math.abs(
-        assoc.memoryB.occurredAt.getTime() - assoc.memoryA.occurredAt.getTime()
-      );
-      if (gap > 0) {
-        timeGaps.push(gap);
+      if (assoc.memoryBRelation.occurredAt && assoc.memoryARelation.occurredAt) {
+        const gap = Math.abs(
+          assoc.memoryBRelation.occurredAt.getTime() - assoc.memoryARelation.occurredAt.getTime(),
+        );
+        if (gap > 0) {
+          timeGaps.push(gap);
+        }
       }
     }
 
@@ -1213,12 +1216,12 @@ export class MemoryFormationService {
 
     // Use 80th percentile of successful association time gaps
     timeGaps.sort((a, b) => a - b);
-    const percentile80 = timeGaps[Math.floor(timeGaps.length * 0.8)];
-    
+    const percentile80 = timeGaps[Math.floor(timeGaps.length * 0.8)] || 7 * 24 * 60 * 60 * 1000;
+
     // Constrain to research bounds: 1-14 days per episodic memory research
-    const minWindow = 1 * 24 * 60 * 60 * 1000;  // 1 day
+    const minWindow = 1 * 24 * 60 * 60 * 1000; // 1 day
     const maxWindow = 14 * 24 * 60 * 60 * 1000; // 14 days
-    
+
     return Math.min(Math.max(percentile80, minWindow), maxWindow);
   }
 }

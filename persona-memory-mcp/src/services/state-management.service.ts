@@ -342,7 +342,7 @@ export class StateManagementService {
     for (const state of allStates) {
       const daysSinceUpdate = (now.getTime() - state.lastUpdated.getTime()) / (1000 * 60 * 60 * 24);
       const retentionDays = this.calculateStateRetentionDays(state, allStates);
-      
+
       if (daysSinceUpdate > retentionDays) {
         statesToDelete.push(state.id);
       }
@@ -371,8 +371,8 @@ export class StateManagementService {
     if (valueComplexity > 5) baseDays += 30; // Complex states kept longer
 
     // Factor 2: State uniqueness - rare states kept longer
-    const similarStates = allStates.filter(s => 
-      s.stateKey === state.stateKey && s.id !== state.id
+    const similarStates = allStates.filter(
+      (s) => s.stateKey === state.stateKey && s.id !== state.id,
     ).length;
     if (similarStates < 3) baseDays += 60; // Unique states kept much longer
 
@@ -401,22 +401,29 @@ export class StateManagementService {
    */
   private calculateValueComplexity(value: unknown): number {
     if (value === null || value === undefined) return 0;
-    
+
     let complexity = 0;
-    
+
     if (typeof value === 'object' && value !== null) {
       if (Array.isArray(value)) {
-        complexity = value.length + value.reduce((sum, item) => sum + this.calculateValueComplexity(item), 0);
+        complexity =
+          value.length + value.reduce((sum, item) => sum + this.calculateValueComplexity(item), 0);
       } else {
         const keys = Object.keys(value);
-        complexity = keys.length + keys.reduce((sum, key) => sum + this.calculateValueComplexity((value as Record<string, unknown>)[key]), 0);
+        complexity =
+          keys.length +
+          keys.reduce(
+            (sum, key) =>
+              sum + this.calculateValueComplexity((value as Record<string, unknown>)[key]),
+            0,
+          );
       }
     } else if (typeof value === 'string') {
       complexity = Math.min(10, value.length / 10); // String length contributes to complexity
     } else {
       complexity = 1; // Primitive values have base complexity
     }
-    
+
     return complexity;
   }
 
