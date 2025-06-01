@@ -142,6 +142,14 @@ export class PersonaBuilder {
     return updatedPersona || persona;
   }
 
+  // Extract persona insights from a single message and update existing persona
+  async extractFromSingleMessage(content: string, personaId: string): Promise<void> {
+    console.log(`🔍 Extracting persona insights from message for persona ${personaId}`);
+    
+    const extraction = await this.multiPassExtraction(content);
+    await this.saveExtractionResults(personaId, extraction);
+  }
+
   // Build persona from explicit description
   async buildFromDescription(description: string): Promise<Persona> {
     const personaId = uuidv4();

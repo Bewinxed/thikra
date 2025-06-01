@@ -15,6 +15,7 @@ import type {
   PADValues,
 } from '../../baml_client/types';
 import { PromptCache } from '../utils/prompt-cache';
+import { bamlCache } from '../utils/baml-cache';
 import type { EmbeddingService } from './embedding.service';
 import type { MemoryGraphService } from './memory-graph.service';
 import type { RelationshipEvolutionService } from './relationship-evolution.service';
@@ -375,7 +376,11 @@ export class MemoryFormationService {
   ): Promise<MemoryType> {
     try {
       const contextStr = context ? JSON.stringify(context) : 'No additional context';
-      const classification = await b.ClassifyMemoryType(content, contextStr);
+      const classification = await bamlCache.call(
+        'ClassifyMemoryType',
+        [content, contextStr],
+        () => b.ClassifyMemoryType(content, contextStr)
+      );
 
       // Map BAML enum to Prisma enum
       const memoryTypeMap: Record<string, MemoryType> = {
@@ -401,7 +406,11 @@ export class MemoryFormationService {
    */
   private async generateContentTags(content: string): Promise<string[]> {
     try {
-      const tagResult = await b.GenerateContentTags(content);
+      const tagResult = await bamlCache.callSingle(
+        'GenerateContentTags',
+        content,
+        () => b.GenerateContentTags(content)
+      );
 
       // Combine all tag types into a flat array
       const allTags = [
@@ -431,7 +440,11 @@ export class MemoryFormationService {
       const role = typeof speakerRole === 'string' ? speakerRole : 'unknown';
       const contextStr = context ? JSON.stringify(context) : 'No additional context';
 
-      const significance = await b.AssessContentSignificance(content, role, contextStr);
+      const significance = await bamlCache.call(
+        'AssessContentSignificance',
+        [content, role, contextStr],
+        () => b.AssessContentSignificance(content, role, contextStr)
+      );
 
       // Validate the score is in valid range
       if (significance.significanceScore < 0 || significance.significanceScore > 1) {
@@ -595,7 +608,11 @@ export class MemoryFormationService {
               recentlyActive: recentEntityIds.has(entity.id),
             });
 
-            const relevanceAnalysis = await b.CalculateEntityRelevance(entityInfo, query);
+            const relevanceAnalysis = await bamlCache.call(
+              'CalculateEntityRelevance',
+              [entityInfo, query],
+              () => b.CalculateEntityRelevance(entityInfo, query)
+            );
 
             // Apply recency boost to LLM score if entity was recently active
             let finalScore = relevanceAnalysis.relevanceScore;
@@ -720,11 +737,10 @@ export class MemoryFormationService {
     );
 
     try {
-      const entityResult = await b.ExtractConversationEntities(
-        messagesJson,
-        personaName,
-        channel,
-        existingEntities,
+      const entityResult = await bamlCache.call(
+        'ExtractConversationEntities',
+        [messagesJson, personaName, channel, existingEntities],
+        () => b.ExtractConversationEntities(messagesJson, personaName, channel, existingEntities)
       );
 
       // Process extracted entities and handle consolidation properly
@@ -1104,7 +1120,11 @@ export class MemoryFormationService {
    * Check if content is substantial enough to warrant emotional analysis
    */
   private async hasEmotionalContent(content: string): Promise<boolean> {
-    const analysis = await b.CheckEmotionalContent(content);
+    const analysis = await bamlCache.callSingle(
+      'CheckEmotionalContent',
+      content,
+      () => b.CheckEmotionalContent(content)
+    );
     return analysis.hasEmotionalContent;
   }
 
@@ -1113,21 +1133,11 @@ export class MemoryFormationService {
    */
   private async detectEmotions(text: string): Promise<EmotionAnalysis> {
     try {
-      // Try cache first
-      const cached = await this.promptCache.load('AnalyzeEmotions', text);
-      let analysis: EmotionAnalysis;
-
-      if (cached) {
-        analysis = JSON.parse(cached.response) as EmotionAnalysis;
-      } else {
-        // Use BAML function to analyze emotions
-        analysis = await b.AnalyzeEmotions(text);
-
-        // Store in cache
-        await this.promptCache.store('AnalyzeEmotions', text, analysis, undefined);
-      }
-
-      return analysis;
+      return await bamlCache.callSingle(
+        'AnalyzeEmotions',
+        text,
+        () => b.AnalyzeEmotions(text)
+      );
     } catch (error) {
       console.error('Error detecting emotions:', error);
       throw new Error('Emotion detection failed - no fallback available');
@@ -1138,7 +1148,11 @@ export class MemoryFormationService {
    * Check if content is meaningful enough to create a memory
    */
   private async isContentMeaningful(content: string): Promise<boolean> {
-    const analysis = await b.CheckContentMeaningfulness(content);
+    const analysis = await bamlCache.callSingle(
+      'CheckContentMeaningfulness',
+      content,
+      () => b.CheckContentMeaningfulness(content)
+    );
     return analysis.isMeaningful;
   }
 
@@ -1152,7 +1166,11 @@ export class MemoryFormationService {
       markers: entity.identificationMarkers,
     });
 
-    const analysis = await b.CalculateEntityRelevance(entityContext, query);
+    const analysis = await bamlCache.call(
+      'CalculateEntityRelevance',
+      [entityContext, query],
+      () => b.CalculateEntityRelevance(entityContext, query)
+    );
     return analysis.relevanceScore;
   }
 
@@ -1168,7 +1186,11 @@ export class MemoryFormationService {
       strength: memory.memoryStrength,
     });
 
-    const analysis = await b.CalculateReinforcementBoost(memoryContext);
+    const analysis = await bamlCache.callSingle(
+      'CalculateReinforcementBoost',
+      memoryContext,
+      () => b.CalculateReinforcementBoost(memoryContext)
+    );
     return analysis.boostAmount;
   }
 

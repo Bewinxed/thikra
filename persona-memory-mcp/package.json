@@ -6,11 +6,18 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir=dist",
+    "mcp": "bun run src/mcp-server.ts",
+    "mcp:dev": "bun run --watch src/mcp-server.ts",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "bun run prisma/seed.ts",
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
+    "personas": "bun run process-personality-definitions.ts",
+    "personas:test": "bun run test-intimacy-escalation.ts --messages 1",
+    "personas:test:full": "bun run test-intimacy-escalation.ts --messages 3",
+    "personas:reactions": "bun run process-personality-definitions.ts --test-reactions",
+    "personas:dir": "bun run process-personality-definitions.ts --dir",
     "lint": "biome check .",
     "lint:fix": "biome check --apply .",
     "format": "biome format --write ."
@@ -31,7 +38,7 @@
     "@anthropic-ai/sdk": "^0.52.0",
     "@boundaryml/baml": "^0.89.0",
     "@instructor-ai/instructor": "^1.7.0",
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@prisma/client": "^6.8.2",
     "@typescript/native-preview": "^7.0.0-dev.20250527.1",
     "dotenv": "^16.5.0",
@@ -42,6 +49,6 @@
     "prisma": "^6.8.2",
     "simple-statistics": "^7.8.8",
     "uuid": "^11.1.0",
-    "zod": "^3.25.32"
+    "zod": "^3.25.46"
   }
 }

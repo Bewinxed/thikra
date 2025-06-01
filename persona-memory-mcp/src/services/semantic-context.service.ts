@@ -144,12 +144,13 @@ export class SemanticContextService {
       // Get embedding from the source entity via raw SQL (Memory has embeddings)
       if (link.sourceType === 'memory') {
         try {
-          const memoryWithEmbedding = await this.prisma.$queryRaw<Array<{ embedding: number[] }>>`
-            SELECT embedding FROM "Memory" WHERE id = ${link.sourceId}::uuid
+          // Use proper vector casting for pgvector with Prisma
+          const memoryWithEmbedding = await this.prisma.$queryRaw<Array<{ embedding: string }>>`
+            SELECT embedding::text FROM "Memory" WHERE id = ${link.sourceId}::uuid AND embedding IS NOT NULL
           `;
 
           if (memoryWithEmbedding[0]?.embedding) {
-            const sourceEmbedding = memoryWithEmbedding[0].embedding;
+            const sourceEmbedding = this.parseVectorString(memoryWithEmbedding[0].embedding);
             const similarity = this.calculateCosineSimilarity(queryEmbedding, sourceEmbedding);
             if (similarity >= similarityThreshold) {
               similarItems.push({ link, similarity });
@@ -348,10 +349,12 @@ export class SemanticContextService {
       let currentEmbedding: number[] | null = null;
       if (sourceType === 'memory') {
         try {
-          const memoryWithEmbedding = await this.prisma.$queryRaw<Array<{ embedding: number[] }>>`
-            SELECT embedding FROM "Memory" WHERE id = ${currentLink.sourceId}::uuid
+          const memoryWithEmbedding = await this.prisma.$queryRaw<Array<{ embedding: string }>>`
+            SELECT embedding::text FROM "Memory" WHERE id = ${currentLink.sourceId}::uuid AND embedding IS NOT NULL
           `;
-          currentEmbedding = memoryWithEmbedding[0]?.embedding || null;
+          currentEmbedding = memoryWithEmbedding[0]?.embedding
+            ? this.parseVectorString(memoryWithEmbedding[0].embedding)
+            : null;
         } catch (error) {
           console.warn(`Could not get embedding for memory ${currentLink.sourceId}:`, error);
           continue;
@@ -368,10 +371,12 @@ export class SemanticContextService {
         let earlierEmbedding: number[] | null = null;
         if (sourceType === 'memory') {
           try {
-            const memoryWithEmbedding = await this.prisma.$queryRaw<Array<{ embedding: number[] }>>`
-              SELECT embedding FROM "Memory" WHERE id = ${earlierLink.sourceId}::uuid
+            const memoryWithEmbedding = await this.prisma.$queryRaw<Array<{ embedding: string }>>`
+              SELECT embedding::text FROM "Memory" WHERE id = ${earlierLink.sourceId}::uuid AND embedding IS NOT NULL
             `;
-            earlierEmbedding = memoryWithEmbedding[0]?.embedding || null;
+            earlierEmbedding = memoryWithEmbedding[0]?.embedding
+              ? this.parseVectorString(memoryWithEmbedding[0].embedding)
+              : null;
           } catch (error) {
             console.warn(`Could not get embedding for memory ${earlierLink.sourceId}:`, error);
             continue;
@@ -401,15 +406,55 @@ export class SemanticContextService {
     return { merged, duplicates };
   }
 
+  private parseVectorString(vectorStr: string): number[] {
+    try {
+      // Handle PostgreSQL vector format: [1.0,2.0,3.0] or (1.0,2.0,3.0)
+      // Remove brackets/parentheses and split by comma
+      const cleanStr = vectorStr.replace(/^[\[\(]|[\]\)]$/g, '');
+      const values = cleanStr.split(',').map((s) => {
+        const num = Number.parseFloat(s.trim());
+        if (isNaN(num)) {
+          throw new Error(`Invalid number: ${s.trim()}`);
+        }
+        return num;
+      });
+
+      if (values.length === 0) {
+        throw new Error('Empty vector');
+      }
+
+      return values;
+    } catch (error) {
+      console.warn('Failed to parse vector string:', vectorStr, error);
+      return [];
+    }
+  }
+
   private calculateCosineSimilarity(a: number[], b: number[]): number {
     // Handle undefined embeddings (return low similarity)
     if (!a || !b || !Array.isArray(a) || !Array.isArray(b)) {
       return 0;
     }
 
+    // Validate dimensions match
+    if (a.length !== b.length || a.length === 0) {
+      console.warn(`Vector dimension mismatch: ${a.length} vs ${b.length}`);
+      return 0;
+    }
+
+    // Calculate cosine similarity
     const dotProduct = a.reduce((sum, val, i) => sum + val * (b[i] ?? 0), 0);
     const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
     const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-    return dotProduct / (magnitudeA * magnitudeB);
+
+    // Prevent division by zero
+    if (magnitudeA === 0 || magnitudeB === 0) {
+      return 0;
+    }
+
+    const similarity = dotProduct / (magnitudeA * magnitudeB);
+
+    // Clamp result to valid range [-1, 1]
+    return Math.max(-1, Math.min(1, similarity));
   }
 }
