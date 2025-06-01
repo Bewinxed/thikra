@@ -156,11 +156,11 @@ export class PADRelationshipBridge {
    */
   private extractTraitValues(params: PersonalityParameter[]): BigFiveTraits {
     const traits: BigFiveTraits = {
-      neuroticism: PERSONALITY_THRESHOLDS.POPULATION_MEAN,      // Population mean for Big Five traits
-      extraversion: PERSONALITY_THRESHOLDS.POPULATION_MEAN,     // 0.5 = neutral/average on 0-1 scale
-      openness: PERSONALITY_THRESHOLDS.POPULATION_MEAN,         // Not arbitrary - research validated
-      agreeableness: PERSONALITY_THRESHOLDS.POPULATION_MEAN,    // Costa & McCrae (1992) NEO-PI-R norms
-      conscientiousness: PERSONALITY_THRESHOLDS.POPULATION_MEAN,// Standard personality psychology practice
+      neuroticism: PERSONALITY_THRESHOLDS.POPULATION_MEAN, // Population mean for Big Five traits
+      extraversion: PERSONALITY_THRESHOLDS.POPULATION_MEAN, // 0.5 = neutral/average on 0-1 scale
+      openness: PERSONALITY_THRESHOLDS.POPULATION_MEAN, // Not arbitrary - research validated
+      agreeableness: PERSONALITY_THRESHOLDS.POPULATION_MEAN, // Costa & McCrae (1992) NEO-PI-R norms
+      conscientiousness: PERSONALITY_THRESHOLDS.POPULATION_MEAN, // Standard personality psychology practice
     };
 
     for (const param of params) {

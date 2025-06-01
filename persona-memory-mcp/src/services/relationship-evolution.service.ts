@@ -1,10 +1,10 @@
 import type {
+  EmotionalState,
   Memory,
   PersonalityParameter,
   PrismaClient,
   Relationship,
   RelationshipEvolution,
-  EmotionalState,
 } from '@prisma/client';
 import {
   EFFECT_SIZES,
@@ -102,7 +102,7 @@ export class RelationshipEvolutionService {
 
     // Consider memory significance in relationship change magnitude
     const significanceMultiplier = memory.significanceScore;
-    
+
     // Consider current relationship state to determine change sensitivity
     const trustSensitivity = 1 - relationship.trustLevel; // Lower trust = more volatile
     const intimacySensitivity = 1 - relationship.intimacyLevel; // Lower intimacy = more room to grow
@@ -116,12 +116,14 @@ export class RelationshipEvolutionService {
       // PAD thresholds from Russell & Mehrabian (1977) emotion circumplex
       if (pleasure > PAD_THRESHOLDS.POSITIVE_EMOTION) {
         // Scale changes by memory significance and relationship sensitivity
-        trustDelta += RELATIONSHIP_DELTAS.TRUST_POSITIVE * significanceMultiplier * trustSensitivity;
+        trustDelta +=
+          RELATIONSHIP_DELTAS.TRUST_POSITIVE * significanceMultiplier * trustSensitivity;
         attractionDelta += RELATIONSHIP_DELTAS.ATTRACTION_POSITIVE * significanceMultiplier;
 
         // High pleasure + low arousal = calm positive state (intimacy building)
         if (arousal < PAD_THRESHOLDS.LOW_AROUSAL) {
-          intimacyDelta += RELATIONSHIP_DELTAS.INTIMACY_COMFORT * significanceMultiplier * intimacySensitivity;
+          intimacyDelta +=
+            RELATIONSHIP_DELTAS.INTIMACY_COMFORT * significanceMultiplier * intimacySensitivity;
         }
       }
 
@@ -135,9 +137,11 @@ export class RelationshipEvolutionService {
     }
 
     // Special handling for highly significant memories with emotional content
-    if (memory.significanceScore > PERSONALITY_THRESHOLDS.HIGH_TRAIT && 
-        emotionalState?.padPleasure !== undefined &&
-        emotionalState.padPleasure > PAD_THRESHOLDS.POSITIVE_EMOTION) {
+    if (
+      memory.significanceScore > PERSONALITY_THRESHOLDS.HIGH_TRAIT &&
+      emotionalState?.padPleasure !== undefined &&
+      emotionalState.padPleasure > PAD_THRESHOLDS.POSITIVE_EMOTION
+    ) {
       // Significant memories can shift power dynamics
       const currentPowerBalance = relationship.powerDynamic;
       if (currentPowerBalance === 'submissive') {
@@ -191,7 +195,9 @@ export class RelationshipEvolutionService {
   /**
    * Helper methods
    */
-  private async getEmotionalState(emotionalStateId: string | null): Promise<EmotionalStateWithPAD | null> {
+  private async getEmotionalState(
+    emotionalStateId: string | null,
+  ): Promise<EmotionalStateWithPAD | null> {
     if (!emotionalStateId) return null;
 
     // Use existing emotional state system
@@ -281,19 +287,19 @@ export class RelationshipEvolutionService {
   ): string {
     // Change reason thresholds based on relationship research
     // Using moderate effect sizes (Cohen, 1988) for categorical determination
-    
+
     // Primary reason based on largest change
     if (changes.trustDelta > EFFECT_SIZES.MEDIUM) return 'trust_building';
     if (changes.trustDelta < -EFFECT_SIZES.MEDIUM) return 'trust_violation';
     if (changes.intimacyDelta > EFFECT_SIZES.SMALL) return 'intimacy_deepening';
     if (changes.attractionDelta > EFFECT_SIZES.MEDIUM) return 'attraction_increase';
     if (changes.attractionDelta < -EFFECT_SIZES.MEDIUM) return 'attraction_decrease';
-    
+
     // If no significant changes but emotional content exists, categorize by emotion
     if (emotionalState?.padPleasure !== undefined) {
       const pleasure = emotionalState.padPleasure;
       const arousal = emotionalState.padArousal || 0;
-      
+
       if (pleasure > PAD_THRESHOLDS.POSITIVE_EMOTION && arousal > PAD_THRESHOLDS.HIGH_AROUSAL) {
         return 'exciting_positive_interaction';
       }
@@ -304,7 +310,7 @@ export class RelationshipEvolutionService {
         return 'negative_emotional_interaction';
       }
     }
-    
+
     return 'emotional_interaction';
   }
 

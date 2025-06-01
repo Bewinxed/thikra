@@ -52,6 +52,15 @@ enum PowerDynamic {
   undefined
 }
 
+enum SemanticSourceType {
+  memory
+  emotion
+  personality
+  relationship
+  entity
+  state
+}
+
 // ==================== CORE IDENTITY TABLES ====================
 
 model Persona {
@@ -93,6 +102,9 @@ model Persona {
   // Personality monitoring (PersDyn model)
   personalityObservations PersonalityObservation[]
   personalityParameters   PersonalityParameter[]
+  
+  // Semantic context linking (Phase 5.5)
+  semanticLinks           SemanticLink[]
 
 }
 
@@ -117,6 +129,8 @@ model Entity {
   sharedDreams         DreamAspiration[]   @relation("DreamSharedWith")
   toldLifeEvents       LifeEvent[]         @relation("LifeEventToldTo")
   personalityObservations PersonalityObservation[]
+  
+  // Note: SemanticLinks reference entities by ID, no direct relation needed
 
 }
 
@@ -165,6 +179,9 @@ model EmotionalState {
   components EmotionalStateComponent[]
   memories   Memory[]
   personalityObservations PersonalityObservation[]
+  
+  // Semantic context linking (Phase 5.5)
+  semanticLinks SemanticLink[]
 
 }
 
@@ -1058,4 +1075,44 @@ model RelationshipSummary {
   
   // Relations
   relationship Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+}
+
+// ==================== SEMANTIC CONTEXT LINKING ====================
+// Phase 5.5: Cross-model semantic links without data duplication
+
+model SemanticLink {
+  id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+
+  // Persona scoping - CRITICAL for proper isolation
+  personaId String @db.Uuid
+
+  // Reference to existing embedded entity (NO duplication!)
+  sourceType SemanticSourceType
+  sourceId   String @db.Uuid
+
+  // Contextual enrichment for Anthropic-style contextual retrieval
+  contextualDescription String? @db.Text // Additional context to prepend when querying
+
+  // Context references (links to related entities)
+  temporalContext        Unsupported("tsrange")? // Time window this applies to
+  participantEntityIds   String[]                @db.Uuid // Who was involved
+  emotionalContextId     String?                 @db.Uuid // Link to EmotionalState
+  relationshipContextIds String[]                @db.Uuid // Links to relevant Relationships
+
+  // Semantic link quality metrics
+  confidenceScore Float @default(1.0) // How confident we are in this semantic connection
+  relevanceDecay  Float @default(0.1) // How quickly this context becomes less relevant
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations - link to existing entities with embeddings
+  persona          Persona         @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  emotionalContext EmotionalState? @relation(fields: [emotionalContextId], references: [id], onDelete: SetNull)
+
+  // Indexes for efficient semantic linking
+  @@index([personaId, sourceType, sourceId]) // Primary lookup
+  @@index([personaId, emotionalContextId]) // Emotional context within persona
+  @@unique([personaId, sourceType, sourceId]) // One semantic link per source per persona
+  @@map("SemanticLink")
 }

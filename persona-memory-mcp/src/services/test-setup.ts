@@ -61,6 +61,7 @@ export class TestDatabaseSetup {
   async cleanup(): Promise<void> {
     try {
       // Delete in order to respect foreign key constraints
+      await this.prisma.semanticLink.deleteMany({}); // Add SemanticLink cleanup
       await this.prisma.personalityObservationEvidence.deleteMany({});
       await this.prisma.personalityObservation.deleteMany({});
       await this.prisma.personalityParameterHistory.deleteMany({});
@@ -177,10 +178,12 @@ export class TestDatabaseSetup {
       }),
     ]);
 
-    // Create test emotion types
+    // Create test emotion types (upsert to avoid unique constraint errors)
     const emotionTypes = await Promise.all([
-      this.prisma.emotionType.create({
-        data: {
+      this.prisma.emotionType.upsert({
+        where: { emotionName: 'joy' },
+        update: {},
+        create: {
           emotionName: 'joy',
           primaryEmotion: 'happiness',
           intensityLevel: 0.8,
@@ -189,8 +192,10 @@ export class TestDatabaseSetup {
           dominanceComponent: 0.5,
         },
       }),
-      this.prisma.emotionType.create({
-        data: {
+      this.prisma.emotionType.upsert({
+        where: { emotionName: 'excitement' },
+        update: {},
+        create: {
           emotionName: 'excitement',
           primaryEmotion: 'excitement',
           intensityLevel: 0.9,
