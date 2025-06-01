@@ -895,7 +895,7 @@ export class MemoryGraphService {
         JOIN "Memory" mb_mem ON mb_mem.id = ma."memoryB"
         WHERE ma."associationType" = 'temporal'
           AND ma_mem."personaId" = ${personaId}::uuid
-          AND ma_mem."memoryType" = ${memoryType}
+          AND ma_mem."memoryType" = ${memoryType}::"MemoryType"
           AND ma_mem."accessCount" > 0
           AND mb_mem."accessCount" > 0
           AND ma_mem."occurredAt" IS NOT NULL

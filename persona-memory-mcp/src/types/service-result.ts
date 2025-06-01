@@ -51,42 +51,42 @@ export const RESEARCH_DEFAULTS = {
     citation: 'Murre & Dros (2015) - Ebbinghaus forgetting curve midpoint',
     range: [0.05, 0.3],
   },
-  
+
   // Emotional memory enhancement
   emotionalProtectionFactor: {
     value: 0.3,
     citation: 'McGaugh (2004) - Emotional memory protection from decay',
     range: [0.2, 0.4],
   },
-  
+
   // Reconsolidation windows
   reconsolidationWindow: {
     value: 6,
     citation: 'Nader & Hardt (2009) - Memory reconsolidation window hours',
     range: [1, 12],
   },
-  
-  // Temporal association windows  
+
+  // Temporal association windows
   temporalWindow: {
     value: 24,
     citation: 'Conway & Pleydell-Pearce (2000) - Episodic memory temporal relevance',
     range: [12, 72],
   },
-  
+
   // Emotional intensity thresholds
   emotionalIntensityThreshold: {
     value: 0.3,
     citation: 'Russell & Mehrabian (1977) - PAD model meaningful emotional response threshold',
     range: [0.2, 0.6],
   },
-  
+
   // Memory strength scaling
   memoryStrengthScaling: {
     value: 10,
     citation: 'Rubin & Wenzel (1996) - Memory strength normalization scaling',
     range: [5, 15],
   },
-  
+
   // Association strength thresholds by type
   associationThresholds: {
     temporal: {
@@ -94,7 +94,7 @@ export const RESEARCH_DEFAULTS = {
       citation: 'Information retrieval research - temporal connections valuable even if weak',
     },
     semantic: {
-      value: 0.4, 
+      value: 0.4,
       citation: 'Information retrieval research - semantic similarity needs moderate strength',
     },
     emotional: {

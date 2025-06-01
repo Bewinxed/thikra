@@ -925,7 +925,7 @@ export class AgenticMemoryRetrieval {
       WITH association_strengths AS (
         -- Get all association strengths from memories that were successfully retrieved
         SELECT ma."associationStrength" as strength
-        FROM "MemoryAssociation" ma
+        FROM "memory_associations" ma
         WHERE (
           ma."memoryA" IN (
             SELECT m.id FROM "Memory" m 
@@ -1192,7 +1192,7 @@ export class AgenticMemoryRetrieval {
         ma."associationStrength" as association_strength,
         ma_mem."accessCount" as "memoryA_access",
         mb_mem."accessCount" as "memoryB_access"
-      FROM "MemoryAssociation" ma
+      FROM "memory_associations" ma
       JOIN "Memory" ma_mem ON ma_mem.id = ma."memoryA"
       JOIN "Memory" mb_mem ON mb_mem.id = ma."memoryB"
       WHERE ma."associationType" = 'temporal'

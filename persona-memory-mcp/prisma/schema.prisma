@@ -245,6 +245,9 @@ model Memory {
   stateChangeTriggers    PersonaStateChange[]
   preferenceFormation    Preference[]
   personalityObservations PersonalityObservation[]
+  
+  // NEW: Relationship evolution tracking
+  relationshipEvolutions RelationshipEvolution[]
 
   @@index([personaId, memoryType])
   @@index([personaId, occurredAt(sort: Desc)])
@@ -530,6 +533,10 @@ model Relationship {
   persona          Persona           @relation("PersonaRelationships", fields: [personaId], references: [id], onDelete: Cascade)
   entity           Entity            @relation("EntityRelationships", fields: [entityId], references: [id])
   somaticResponses SomaticResponse[]
+  
+  // NEW: Relationship evolution tracking
+  evolutions       RelationshipEvolution[]
+  summary          RelationshipSummary?
 
   @@unique([personaId, entityId])
 }
@@ -1001,4 +1008,54 @@ model PersonalityParameterHistory {
   parameter PersonalityParameter @relation(fields: [parameterId], references: [id], onDelete: Cascade)
   
   @@index([parameterId, recordedAt])
+}
+
+// ==================== RELATIONSHIP EVOLUTION ====================
+
+model RelationshipEvolution {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  relationshipId  String   @db.Uuid
+  
+  // Simple deltas - how much changed
+  trustDelta      Float?   // How much trust changed (-1 to 1)
+  intimacyDelta   Float?   // How much intimacy changed (-1 to 1)
+  attractionDelta Float?   // How much attraction changed (-1 to 1)
+  
+  // Context from existing systems
+  triggerMemoryId String   @db.Uuid // Memory that caused this change
+  changeReason    String   @db.VarChar(100) // "positive_interaction", "boundary_respected", etc.
+  
+  // Link to existing PAD system - emotional context when change occurred
+  padPleasure     Float?   // -1 to 1
+  padArousal      Float?   // 0 to 1  
+  padDominance    Float?   // -1 to 1
+  
+  timestamp       DateTime @default(now())
+  
+  // Relations
+  relationship    Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+  triggerMemory   Memory @relation(fields: [triggerMemoryId], references: [id])
+  
+  @@index([relationshipId, timestamp])
+  @@index([triggerMemoryId])
+}
+
+model RelationshipSummary {
+  relationshipId    String @id @db.Uuid
+  
+  // Current levels (auto-updated from Relationship table)
+  currentTrust      Float
+  currentIntimacy   Float  
+  currentAttraction Float
+  
+  // Patterns for LLM context generation
+  trustTrend        String   @db.VarChar(20) // "increasing", "stable", "declining"
+  stabilityPattern  String   @db.VarChar(20) // "stable", "volatile", "gradual_growth"
+  relationshipPhase String   @db.VarChar(20) // "forming", "established", "deepening"
+  
+  lastSignificantChange DateTime?
+  updatedAt            DateTime @updatedAt
+  
+  // Relations
+  relationship Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
 }

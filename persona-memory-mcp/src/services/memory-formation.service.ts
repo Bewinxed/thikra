@@ -17,6 +17,7 @@ import type {
 import { PromptCache } from '../utils/prompt-cache';
 import type { EmbeddingService } from './embedding.service';
 import type { MemoryGraphService } from './memory-graph.service';
+import type { RelationshipEvolutionService } from './relationship-evolution.service';
 
 // Define types that aren't in the schema
 type MessageRole = 'user' | 'assistant' | 'system';
@@ -62,6 +63,7 @@ export class MemoryFormationService {
     private prisma: PrismaClient,
     private embeddingService: EmbeddingService,
     private memoryGraph: MemoryGraphService,
+    private relationshipEvolution?: RelationshipEvolutionService,
   ) {
     this.promptCache = new PromptCache();
     this.loadEmotionTypes();
@@ -277,6 +279,9 @@ export class MemoryFormationService {
 
     // Create associations with related memories
     await this.memoryGraph.buildAssociationsForMemory(memory.id);
+
+    // RELATIONSHIP EVOLUTION: Process new memory for relationship changes
+    await this.processRelationshipEvolution(memory, participants);
 
     return memory;
   }
@@ -1223,5 +1228,39 @@ export class MemoryFormationService {
     const maxWindow = 14 * 24 * 60 * 60 * 1000; // 14 days
 
     return Math.min(Math.max(percentile80, minWindow), maxWindow);
+  }
+
+  /**
+   * Process relationship evolution based on new memory
+   * Triggers after memory creation to update relationship dynamics
+   */
+  private async processRelationshipEvolution(
+    memory: Memory & { emotionalState?: any },
+    participantIds: string[],
+  ): Promise<void> {
+    // Only process if we have relationship evolution service and participants
+    if (!this.relationshipEvolution || participantIds.length === 0) {
+      return;
+    }
+
+    try {
+      // Find relationships between persona and memory participants
+      const relationships = await this.prisma.relationship.findMany({
+        where: {
+          personaId: memory.personaId,
+          entityId: {
+            in: participantIds,
+          },
+        },
+      });
+
+      // Process each relationship for potential evolution
+      for (const relationship of relationships) {
+        await this.relationshipEvolution.processNewMemory(memory, relationship);
+      }
+    } catch (error) {
+      // Log but don't fail memory creation for relationship processing errors
+      console.warn('Failed to process relationship evolution:', error);
+    }
   }
 }

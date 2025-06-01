@@ -134,7 +134,12 @@ export class PersonaBuilder {
     // Generate and update persona name based on extracted traits
     await this.updatePersonaName(personaId, extraction);
 
-    return persona;
+    // Return the updated persona with the generated name
+    const updatedPersona = await this.prisma.persona.findUnique({
+      where: { id: personaId },
+    });
+
+    return updatedPersona || persona;
   }
 
   // Build persona from explicit description
@@ -155,7 +160,12 @@ export class PersonaBuilder {
     // Generate and update persona name based on extracted traits
     await this.updatePersonaName(personaId, extraction);
 
-    return persona;
+    // Return the updated persona with the generated name
+    const updatedPersona = await this.prisma.persona.findUnique({
+      where: { id: personaId },
+    });
+
+    return updatedPersona || persona;
   }
 
   // Helper to cache BAML extraction calls
