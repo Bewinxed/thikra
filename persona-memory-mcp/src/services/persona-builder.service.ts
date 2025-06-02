@@ -205,30 +205,29 @@ export class PersonaBuilder {
       // Check cache first for all extractions
       const cacheKey = `persona_builder_${content}`;
 
-      // Pass 1: Identity Components
-      const identityResult = await this.cachedExtract('ExtractIdentityComponents', content, () =>
-        b.ExtractIdentityComponents(content),
-      );
-
-      // Pass 2: Physical Attributes
-      const physicalResult = await this.cachedExtract('ExtractPhysicalAttributes', content, () =>
-        b.ExtractPhysicalAttributes(content),
-      );
-
-      // Pass 3: Emotional Patterns
-      const emotionalResult = await this.cachedExtract('ExtractEmotionalPatterns', content, () =>
-        b.ExtractEmotionalPatterns(content),
-      );
-
-      // Pass 4: Speech Patterns
-      const speechResult = await this.cachedExtract('ExtractSpeechPatterns', content, () =>
-        b.ExtractSpeechPatterns(content),
-      );
-
-      // Pass 5: Desires and Boundaries
-      const desiresResult = await this.cachedExtract('ExtractDesiresAndBoundaries', content, () =>
-        b.ExtractDesiresAndBoundaries(content),
-      );
+      // BATCH PROCESSING: Run all 5 extraction passes in parallel instead of sequentially
+      const [identityResult, physicalResult, emotionalResult, speechResult, desiresResult] = await Promise.all([
+        // Pass 1: Identity Components
+        this.cachedExtract('ExtractIdentityComponents', content, () =>
+          b.ExtractIdentityComponents(content),
+        ),
+        // Pass 2: Physical Attributes
+        this.cachedExtract('ExtractPhysicalAttributes', content, () =>
+          b.ExtractPhysicalAttributes(content),
+        ),
+        // Pass 3: Emotional Patterns
+        this.cachedExtract('ExtractEmotionalPatterns', content, () =>
+          b.ExtractEmotionalPatterns(content),
+        ),
+        // Pass 4: Speech Patterns
+        this.cachedExtract('ExtractSpeechPatterns', content, () =>
+          b.ExtractSpeechPatterns(content),
+        ),
+        // Pass 5: Desires and Boundaries
+        this.cachedExtract('ExtractDesiresAndBoundaries', content, () =>
+          b.ExtractDesiresAndBoundaries(content),
+        ),
+      ]);
 
       return {
         identityComponents: identityResult.components.map((c) => ({
@@ -302,10 +301,21 @@ export class PersonaBuilder {
 
   // Save extraction results to database using actual schema models
   private async saveExtractionResults(personaId: string, results: ExtractionResult): Promise<void> {
-    // Save identity components
+    // Save identity components (use upsert to handle duplicates)
     for (const component of results.identityComponents) {
-      await this.prisma.identityComponent.create({
-        data: { personaId, ...component },
+      await this.prisma.identityComponent.upsert({
+        where: {
+          personaId_componentType_content: {
+            personaId,
+            componentType: component.componentType,
+            content: component.content,
+          },
+        },
+        update: {
+          importance: component.importance || 0.5,
+          isNegotiable: component.isNegotiable !== undefined ? component.isNegotiable : true,
+        },
+        create: { personaId, ...component },
       });
     }
 

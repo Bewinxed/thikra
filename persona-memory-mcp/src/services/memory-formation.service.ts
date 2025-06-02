@@ -214,12 +214,16 @@ export class MemoryFormationService {
       throw new Error('Memory significance must be provided or calculated, not defaulted');
     }
 
-    // Generate embedding for content
-    const embedding = await this.embeddingService.embed(content);
+    // BATCH PROCESSING: Run embedding, emotional analysis, and memory type in parallel
+    const [embedding, memoryType, hasEmotionalContentResult] = await Promise.all([
+      this.embeddingService.embed(content),
+      this.determineMemoryType(content, contentType, context),
+      contentType === 'text' ? this.hasEmotionalContent(content) : Promise.resolve(false),
+    ]);
 
-    // Detect and create emotional state if content has emotional content
+    // Create emotional state if content has emotional content
     let emotionalStateId: string | null = null;
-    if (contentType === 'text' && (await this.hasEmotionalContent(content))) {
+    if (hasEmotionalContentResult) {
       const emotionAnalysis = await this.detectEmotions(content);
       if (
         emotionAnalysis.primaryEmotions.length > 0 ||
@@ -228,9 +232,6 @@ export class MemoryFormationService {
         emotionalStateId = await this.createEmotionalState(emotionAnalysis, content);
       }
     }
-
-    // Determine memory type using LLM analysis
-    const memoryType = await this.determineMemoryType(content, contentType, context);
 
     // Create the memory record
     const memory = await this.prisma.memory.create({
@@ -305,17 +306,13 @@ export class MemoryFormationService {
       ? await this.extractMessageParticipants(message, conversationEntities)
       : [];
 
-    // Generate tags using LLM analysis
-    const tags = await this.generateContentTags(content);
-
-    // Calculate significance using LLM analysis
-    const significance = await this.assessContentSignificance(content, message.role, context);
-
-    // Determine memory type using LLM analysis
-    const memoryType = await this.determineMemoryType(content, 'text', context);
-
-    // Extract emotional context using existing LLM emotion detection
-    const emotionalContext = await this.extractEmotionalContext(content);
+    // BATCH PROCESSING: Run LLM analysis in parallel instead of sequentially
+    const [tags, significance, memoryType, emotionalContext] = await Promise.all([
+      this.generateContentTags(content),
+      this.assessContentSignificance(content, message.role, context),
+      this.determineMemoryType(content, 'text', context),
+      this.extractEmotionalContext(content),
+    ]);
 
     return {
       content,

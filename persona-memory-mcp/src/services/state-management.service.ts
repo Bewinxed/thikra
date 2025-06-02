@@ -82,38 +82,20 @@ export class StateManagementService {
     stateValue: JsonValue,
     description?: string,
   ): Promise<PersonaState> {
-    // Check if state exists
-    const existing = await this.prisma.personaState.findUnique({
+    // Use upsert to avoid race conditions with concurrent calls
+    return this.prisma.personaState.upsert({
       where: {
         personaId_stateKey: {
           personaId,
           stateKey,
         },
       },
-    });
-
-    if (existing) {
-      // Track transition for history (store in description for now)
-      const transitionRecord: StateTransition = {
-        timestamp: new Date().toISOString(),
-        fromValue: existing.stateValue,
-        toValue: stateValue,
-        duration: Date.now() - new Date(existing.lastUpdated).getTime(),
-      };
-
-      return this.prisma.personaState.update({
-        where: { id: existing.id },
-        data: {
-          stateValue: stateValue === null ? Prisma.JsonNull : stateValue,
-          description: description || `Previous: ${JSON.stringify(transitionRecord)}`,
-          updateCount: existing.updateCount + 1,
-        },
-      });
-    }
-
-    // Create new state
-    return this.prisma.personaState.create({
-      data: {
+      update: {
+        stateValue: stateValue === null ? Prisma.JsonNull : stateValue,
+        description: description || `Updated: ${new Date().toISOString()}`,
+        updateCount: { increment: 1 },
+      },
+      create: {
         personaId,
         stateKey,
         stateValue: stateValue === null ? Prisma.JsonNull : stateValue,
