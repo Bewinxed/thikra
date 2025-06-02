@@ -413,7 +413,7 @@ export class SemanticContextService {
       const cleanStr = vectorStr.replace(/^[\[\(]|[\]\)]$/g, '');
       const values = cleanStr.split(',').map((s) => {
         const num = Number.parseFloat(s.trim());
-        if (isNaN(num)) {
+        if (Number.isNaN(num)) {
           throw new Error(`Invalid number: ${s.trim()}`);
         }
         return num;

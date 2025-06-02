@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { existsSync } from 'node:fs';
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
-import { readFile, readdir, stat, writeFile } from 'fs/promises';
 import { EmbeddingService } from './src/services/embedding.service';
 import { LLMService } from './src/services/llm.service';
 import { PersonaBuilder } from './src/services/persona-builder.service';
@@ -121,7 +121,7 @@ export class PersonalityDefinitionProcessor {
           console.warn(`Failed to parse JSON in ${filePath}:`, error);
         }
       } else if (inJsonBlock) {
-        jsonContent += line + '\n';
+        jsonContent += `${line}\n`;
       }
     }
 
@@ -397,7 +397,7 @@ export class PersonalityDefinitionProcessor {
           // Simulate a reaction since makeDecision doesn't exist in LLMService
           const reaction = {
             toolSequence: ['getPersonaState', 'storeMemory'],
-            reasoning: 'Simulated response for testing'
+            reasoning: 'Simulated response for testing',
           };
 
           const responseTime = Date.now() - startTime;

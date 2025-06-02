@@ -595,9 +595,11 @@ export class AgenticMemoryRetrieval {
 
   private async isEmotionallyRelevant(query: string): Promise<boolean> {
     try {
-      // Use existing LLM emotion detection to check for emotional intent
-      const emotionalAnalysis = await b.CheckEmotionalContent(query);
-      return emotionalAnalysis.hasEmotionalContent;
+      // Use AnalyzeEmotions instead of CheckEmotionalContent to eliminate redundancy
+      const emotionAnalysis = await b.AnalyzeEmotions(query);
+      return (
+        emotionAnalysis.primaryEmotions.length > 0 || emotionAnalysis.secondaryEmotions.length > 0
+      );
     } catch (error) {
       console.error('Failed to check emotional relevance with LLM:', error);
       throw new Error(
@@ -644,14 +646,16 @@ export class AgenticMemoryRetrieval {
    */
   private async extractEmotionalKeywords(query: string): Promise<string[]> {
     try {
-      // Use LLM-based emotion detection for language-agnostic keyword extraction
-      const emotionalAnalysis = await b.CheckEmotionalContent(query);
-      if (!emotionalAnalysis.hasEmotionalContent) {
+      // Use AnalyzeEmotions directly instead of CheckEmotionalContent + AnalyzeEmotions redundancy
+      const emotionResult = await b.AnalyzeEmotions(query);
+
+      // Check if there are any emotions detected
+      if (
+        emotionResult.primaryEmotions.length === 0 &&
+        emotionResult.secondaryEmotions.length === 0
+      ) {
         return [];
       }
-
-      // Extract emotion context using existing BAML emotion analysis
-      const emotionResult = await b.AnalyzeEmotions(query);
 
       // Combine primary and secondary emotions for keyword list
       const keywords: string[] = [];
@@ -1429,7 +1433,8 @@ export class AgenticMemoryRetrieval {
       // Calculate match score based on query modality and content type
       if (modalityAnalysis.targetModality === contentType) {
         return modalityAnalysis.modalityConfidence * 0.8; // Strong match
-      } else if (modalityAnalysis.relatedModalities?.includes(contentType)) {
+      }
+      if (modalityAnalysis.relatedModalities?.includes(contentType)) {
         return modalityAnalysis.modalityConfidence * 0.4; // Related modality
       }
 

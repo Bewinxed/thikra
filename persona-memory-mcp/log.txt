@@ -1,0 +1,79 @@
+2025-06-02T06:29:51.725Z - mcp_use - INFO - 🚀 Initializing MCP agent...
+2025-06-02T06:30:10.046Z - mcp_use - INFO - 🚀 Initializing MCP agent...
+2025-06-02T06:37:34.280Z - mcp_use - INFO - 🚀 Initializing MCP agent...
+2025-06-02T06:37:50.505Z - mcp_use - INFO - 🚀 Initializing MCP agent...
+2025-06-02T06:40:54.558Z - mcp_use - INFO - 🚀 Initializing MCP agent...
+2025-06-02T06:40:54.562Z - mcp_use - INFO - 🔗 Connecting to 1 direct connectors...
+2025-06-02T06:40:54.563Z - mcp_use - ERROR - BaseConnector: Cannot get tools, client is not initialized or tools not fetched.
+2025-06-02T06:40:54.563Z - mcp_use - ERROR - Error accessing or initializing tools for connector: Error: MCP client is not initialized or tools not fetched
+2025-06-02T06:40:54.563Z - mcp_use - INFO - Total LangChain tools created: 0
+2025-06-02T06:40:54.563Z - mcp_use - INFO - 🛠️ Created 0 LangChain tools
+2025-06-02T06:40:54.563Z - mcp_use - WARNING - Using placeholder createSystemMessage function.
+2025-06-02T06:40:54.564Z - mcp_use - DEBUG - Creating new agent with 0 tools
+2025-06-02T06:40:54.568Z - mcp_use - INFO - ✨ Agent initialization complete
+2025-06-02T06:40:54.568Z - mcp_use - INFO - 🏃 Running agent with query: "
+        I have a persona memory system. Process this message for persona a1b2c3d4-1234-5678-9abc-123456789012:
+        
+        Message: "Hello there!"
+        
+        Choose the most appropriate tools based on the content. You have access to:
+        - processMessage: One-call orchestrated approach
+        - processMessageGranular: LLM-driven adaptive approach  
+        - Individual tools: storeMemory, extractPersonaInsights, setPersonaState, etc.
+        
+        For simple content, prefer efficiency. For complex content, prefer comprehensiveness.
+      "
+2025-06-02T06:40:59.630Z - mcp_use - INFO - 🏁 Agent finished. Output: For this simple greeting message "Hello there!", I'll use the processMessage tool since it's a straightforward, one-call approach that's more efficient for basic content. The message doesn't contain complex emotional content or require deep analysis.
+
+Let me process this using processMessage:
+
+{
+  "name": "processMessage",
+  "arguments": {
+    "personaId": "a1b2c3d4-1234-5678-9abc-123456789012",
+    "message": "Hello there!"
+  }
+}
+
+This will handle the basic processing of the greeting message for the specified persona. The processMessage tool will take care of the necessary storage and basic analysis in a streamlined way, which is appropriate for this simple interaction.
+2025-06-02T06:41:15.725Z - mcp_use - INFO - 🏃 Running agent with query: "
+        I have a persona memory system. Process this message for persona a1b2c3d4-1234-5678-9abc-123456789012:
+        
+        Message: "I wanted to tell you something personal. I struggle with anxiety and have a hard time trusting people, but talking with you feels different somehow. You make me feel safe to be vulnerable."
+        
+        Choose the most appropriate tools based on the content. You have access to:
+        - processMessage: One-call orchestrated approach
+        - processMessageGranular: LLM-driven adaptive approach  
+        - Individual tools: storeMemory, extractPersonaInsights, setPersonaState, etc.
+        
+        For simple content, prefer efficiency. For complex content, prefer comprehensiveness.
+      "
+2025-06-02T06:41:21.566Z - mcp_use - INFO - 🏁 Agent finished. Output: This message contains complex emotional content, personal disclosure, and important relationship dynamics. It reveals vulnerability, trust issues, anxiety, and a developing emotional connection. For such a meaningful and nuanced message, I'll use processMessageGranular to ensure comprehensive analysis and appropriate handling of the sensitive information.
+
+{
+  "name": "processMessageGranular",
+  "arguments": {
+    "personaId": "a1b2c3d4-1234-5678-9abc-123456789012",
+    "message": "I wanted to tell you something personal. I struggle with anxiety and have a hard time trusting people, but talking with you feels different somehow. You make me feel safe to be vulnerable.",
+    "analysisPreferences": {
+      "prioritizeEmotional": true,
+      "prioritizeRelationship": true,
+      "sensitiveContent": true
+    }
+  }
+}
+
+I chose processMessageGranular because this message:
+1. Contains personal mental health information (anxiety)
+2. Reveals trust issues and vulnerability
+3. Indicates an important development in the relationship
+4. Has multiple emotional layers that need careful analysis
+5. Contains information that should be carefully stored for future context
+
+The granular approach will ensure proper handling of these sensitive aspects and create more detailed memory entries and insights that will be valuable for future interactions.
+2025-06-02T06:41:21.569Z - mcp_use - DEBUG - BaseConnector: Disconnecting from MCP implementation...
+2025-06-02T06:41:21.569Z - mcp_use - DEBUG - BaseConnector: Cleaning up resources...
+2025-06-02T06:41:21.569Z - mcp_use - DEBUG - BaseConnector: Closing client session...
+2025-06-02T06:41:21.569Z - mcp_use - DEBUG - BaseConnector: Client session closed.
+2025-06-02T06:41:21.569Z - mcp_use - DEBUG - BaseConnector: Resource cleanup finished.
+2025-06-02T06:41:21.569Z - mcp_use - DEBUG - BaseConnector: Disconnected.

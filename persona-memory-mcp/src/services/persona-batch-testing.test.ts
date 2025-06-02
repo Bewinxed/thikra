@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { join } from 'path';
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
-import { readFile, readdir } from 'fs/promises';
 import { EmbeddingService } from './embedding.service';
 import { LLMService } from './llm.service';
 import { PersonaBuilder } from './persona-builder.service';
@@ -101,7 +101,7 @@ describe('Persona Batch Testing', () => {
       expect(personaCache.size).toBeGreaterThan(0);
       console.log(`📊 Total cached personas: ${personaCache.size}`);
     } catch (error) {
-      console.log(`ℹ️  Personality definitions directory not found, creating test personas instead`);
+      console.log('ℹ️  Personality definitions directory not found, creating test personas instead');
 
       // Create test personas from text descriptions
       const testPersonalities = [
@@ -224,9 +224,9 @@ describe('Persona Batch Testing', () => {
 
         // They should be different (though not always guaranteed)
         if (firstTools !== secondTools) {
-          console.log(`   ✅ Personas showed different decision patterns`);
+          console.log('   ✅ Personas showed different decision patterns');
         } else {
-          console.log(`   ℹ️  Personas showed same decision pattern (this can happen)`);
+          console.log('   ℹ️  Personas showed same decision pattern (this can happen)');
         }
       }
     }
@@ -280,7 +280,7 @@ describe('Persona Batch Testing', () => {
       console.log(`\n📈 Analysis for ${personaInfo.name}:`);
       console.log(`   ⏱️  Avg Response Time: ${analysis.averageResponseTime.toFixed(0)}ms`);
       console.log(
-        `   🔧 Tool Usage:`,
+        '   🔧 Tool Usage:',
         Object.entries(analysis.toolUsagePattern)
           .map(([tool, count]) => `${tool}(${count})`)
           .join(', '),
@@ -296,7 +296,7 @@ describe('Persona Batch Testing', () => {
       analysis: analysisResults,
     };
 
-    console.log(`\n📋 Analysis Summary:`, JSON.stringify(summary, null, 2));
+    console.log('\n📋 Analysis Summary:', JSON.stringify(summary, null, 2));
   }, 60000);
 });
 

@@ -401,6 +401,6 @@ export class PersonaOrchestrationService {
       parts.push(`${stats.semanticConnectionCount} semantic connections`);
     }
 
-    return parts.join(', ') + '.';
+    return `${parts.join(', ')}.`;
   }
 }

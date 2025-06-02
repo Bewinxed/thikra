@@ -386,7 +386,7 @@ describe('Persona MCP Capabilities', () => {
       where: { personaId: persona.id },
     });
 
-    console.log(`\n🏆 FINAL MCP CAPABILITIES ASSESSMENT:`);
+    console.log('\n🏆 FINAL MCP CAPABILITIES ASSESSMENT:');
     console.log(
       `🧠 Entity Memory: ${entityEvaluation.result} (${entityEvaluation.score.toFixed(2)})`,
     );
@@ -403,7 +403,7 @@ describe('Persona MCP Capabilities', () => {
       `🔥 Affectionate Expression: ${affectionEvaluation.result} (${affectionEvaluation.comfort_level.toFixed(2)})`,
     );
 
-    console.log(`\n📈 System Metrics:`);
+    console.log('\n📈 System Metrics:');
     console.log(`- Total Memories: ${allMemories.length}`);
     console.log(`- Emotional Memories: ${emotionalMemories.length}`);
     console.log(`- Personality Observations: ${personalityObs.length}`);

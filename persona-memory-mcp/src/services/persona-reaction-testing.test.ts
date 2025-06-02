@@ -196,7 +196,7 @@ describe('Persona Reaction Testing', () => {
       if (uniqueSequences.size > 1) {
         console.log(`   ✅ Found ${uniqueSequences.size} different reaction patterns\n`);
       } else {
-        console.log(`   ℹ️  All personas had similar reactions\n`);
+        console.log('   ℹ️  All personas had similar reactions\n');
       }
     }
 

@@ -35,6 +35,8 @@ client<llm> CustomHaiku {
   }
 }
 
+
+
 // https://docs.boundaryml.com/docs/snippets/clients/round-robin
 client<llm> CustomFast {
   provider round-robin
@@ -79,6 +81,48 @@ client<llm> OpenRouterGPT4o {
   provider openai
   options {
     model "gpt-4o"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+    }
+  }
+}
+
+client<llm> OpenRouterGeminiFlash25 {
+  // powerful, SOTA uncensored model
+  provider openai
+  options {
+    model "google/gemini-2.5-flash-preview-05-20"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+    }
+  }
+}
+
+client<llm> OpenRouterMistralMini {
+  // fast 24b model for low latency
+  provider openai
+  options {
+    model "mistralai/mistral-small-24b-instruct-2501"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+    }
+  }
+}
+
+client<llm> OpenRouterMinistral {
+  // ultra fast 3b model for common llm tasks
+  provider openai
+  options {
+    model "mistralai/ministral-3b"
     api_key env.OPENROUTER_API_KEY
     base_url "https://openrouter.ai/api/v1"
     headers {
@@ -151,5 +195,45 @@ client<llm> PersonaExtractionFallback {
   provider fallback
   options {
     strategy [OpenRouterGPT4oMini, OpenRouterDeepSeek, OpenRouterHaiku]
+  }
+}
+
+// Sonnet with prompt caching support for complex functions
+client<llm> OpenRouterSonnetWithCache {
+  provider openai
+  options {
+    model "anthropic/claude-sonnet-4"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+      "anthropic-beta" "prompt-caching-2024-07-31"
+    }
+    allowed_role_metadata ["cache_control"]
+    temperature 0.4
+  }
+}
+
+// Fallback for large model functions: Sonnet -> Gemini
+client<llm> LargeModelFallback {
+  provider fallback
+  options {
+    strategy [OpenRouterSonnetWithCache, OpenRouterGeminiFlash25]
+  }
+}
+
+// Client for simple pattern matching tasks
+client<llm> OpenRouterMistralSmall {
+  provider openai
+  options {
+    model "mistralai/mistral-small-24b-instruct-2501"
+    api_key env.OPENROUTER_API_KEY
+    base_url "https://openrouter.ai/api/v1"
+    headers {
+      "HTTP-Referer" "https://persona-memory.local"
+      "X-Title" "Persona Memory MCP"
+    }
+    temperature 0.2  // Lower temperature for consistent extraction
   }
 }

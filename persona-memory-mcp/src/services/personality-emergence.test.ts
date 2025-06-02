@@ -48,11 +48,11 @@ export class NaturalPersonalityEmergence {
   ): Promise<string> {
     console.log(`📝 Developing natural personality from ${conversationPattern} conversations...`);
 
-    const persona = await this.testing['prisma'].persona.create({
+    const persona = await this.testing.prisma.persona.create({
       data: { name: `${conversationPattern} Emergent Persona` },
     });
 
-    const entity = await this.testing['prisma'].entity.create({
+    const entity = await this.testing.prisma.entity.create({
       data: { name: 'Conversation Partner', entityType: 'human' },
     });
 
@@ -60,7 +60,7 @@ export class NaturalPersonalityEmergence {
 
     // Let the system naturally process conversations and develop traits
     for (const conversation of conversations) {
-      await this.testing['mcpClient']!.callTool({
+      await this.testing.mcpClient?.callTool({
         name: 'processMessage',
         arguments: {
           content: conversation,
@@ -138,7 +138,7 @@ export class NaturalPersonalityEmergence {
     console.log('🚀 Testing Natural Personality Emergence\n');
 
     // Create baseline persona
-    const baseline = await this.testing['prisma'].persona.create({
+    const baseline = await this.testing.prisma.persona.create({
       data: { name: 'Baseline Natural Persona' },
     });
 
@@ -167,7 +167,7 @@ export class NaturalPersonalityEmergence {
 
       // Get discovered personality traits via PersonalityMonitorService
       const discoveredTraits =
-        await this.testing['personalityMonitor'].getPersonalityProfile(personaId);
+        await this.testing.personalityMonitor.getPersonalityProfile(personaId);
 
       console.log(`\n🧪 Testing ${patternName} (${discoveredTraits.length} traits discovered)`);
 
@@ -228,7 +228,7 @@ export class NaturalPersonalityEmergence {
     const baselineTags =
       baseline.toolCalls.find((t: any) => t.toolName === 'storeMemory')?.arguments?.tags || [];
 
-    console.log(`🔷 Baseline Response:`);
+    console.log('🔷 Baseline Response:');
     console.log(`   Tools: ${baselineTools.join(' → ')}`);
     console.log(`   Tags: [${baselineTags.join(', ')}]`);
     console.log(`   Reasoning: ${baseline.llmReasoning.substring(0, 120)}...`);
@@ -250,7 +250,7 @@ export class NaturalPersonalityEmergence {
           console.log(`      • ${trait.traitDimension}: ${trait.baseline.toFixed(2)}`);
         });
       } else {
-        console.log(`   ❌ No personality traits discovered`);
+        console.log('   ❌ No personality traits discovered');
       }
 
       console.log(`   Tools: ${result.testInteractionResult.toolSequence.join(' → ')}`);
@@ -265,13 +265,13 @@ export class NaturalPersonalityEmergence {
 
       if (toolsDifferent || tagsDifferent || reasoningDifferent) {
         personalitiesWithDifferences++;
-        console.log(`   ✅ DIFFERENT from baseline behavior!`);
+        console.log('   ✅ DIFFERENT from baseline behavior!');
 
-        if (toolsDifferent) console.log(`      → Different tool sequence`);
-        if (tagsDifferent) console.log(`      → Different memory tags`);
-        if (reasoningDifferent) console.log(`      → Different LLM reasoning`);
+        if (toolsDifferent) console.log('      → Different tool sequence');
+        if (tagsDifferent) console.log('      → Different memory tags');
+        if (reasoningDifferent) console.log('      → Different LLM reasoning');
       } else {
-        console.log(`   ❌ Same as baseline behavior`);
+        console.log('   ❌ Same as baseline behavior');
       }
     });
 

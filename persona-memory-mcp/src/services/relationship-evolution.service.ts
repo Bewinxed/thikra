@@ -67,6 +67,192 @@ export class RelationshipEvolutionService {
   }
 
   /**
+   * Analyze relationship shift using BAML intelligence instead of hardcoded patterns
+   * Gets relationship context and current emotional state for intelligent analysis
+   */
+  async analyzeRelationshipShift(
+    content: string,
+    personaId: string,
+    entityId: string,
+    memoryId: string,
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    detected: {
+      hasSignificantChange: boolean;
+      trustChange: number;
+      intimacyChange: number;
+      confidence: number;
+      indicators: string[];
+    };
+    analysis: {
+      trustLevelChange: string;
+      intimacyChange: string;
+      reasoning: string;
+    };
+    recommendation: string;
+  }> {
+    try {
+      // Get current relationship context
+      const relationship = await this.prisma.relationship.findUnique({
+        where: {
+          personaId_entityId: {
+            personaId,
+            entityId,
+          },
+        },
+        include: { entity: true },
+      });
+
+      if (!relationship) {
+        return {
+          success: false,
+          error: 'Relationship not found - use identifyEntity first',
+          detected: {
+            hasSignificantChange: false,
+            trustChange: 0,
+            intimacyChange: 0,
+            confidence: 0,
+            indicators: [],
+          },
+          analysis: {
+            trustLevelChange: 'minimal',
+            intimacyChange: 'minimal',
+            reasoning: 'No relationship found',
+          },
+          recommendation: 'Use identifyEntity to create relationship first',
+        };
+      }
+
+      // Get current emotional state - PAD values are stored in EmotionType components
+      const memory = await this.prisma.memory.findUnique({
+        where: { id: memoryId },
+        include: {
+          emotionalState: {
+            include: {
+              components: {
+                include: { emotionType: true },
+              },
+            },
+          },
+        },
+      });
+
+      // Extract PAD values from stored emotion components (weighted average by intensity)
+      let padValues = { pleasure: 0, arousal: 0, dominance: 0 };
+      if (memory?.emotionalState?.components.length) {
+        let totalIntensity = 0;
+        const weightedPad = memory.emotionalState.components.reduce(
+          (acc, comp) => {
+            const weight = comp.intensity;
+            totalIntensity += weight;
+            return {
+              pleasure: acc.pleasure + (comp.emotionType.pleasureComponent ?? 0) * weight,
+              arousal: acc.arousal + (comp.emotionType.arousalComponent ?? 0) * weight,
+              dominance: acc.dominance + (comp.emotionType.dominanceComponent ?? 0) * weight,
+            };
+          },
+          { pleasure: 0, arousal: 0, dominance: 0 },
+        );
+
+        if (totalIntensity > 0) {
+          padValues = {
+            pleasure: weightedPad.pleasure / totalIntensity,
+            arousal: weightedPad.arousal / totalIntensity,
+            dominance: weightedPad.dominance / totalIntensity,
+          };
+        }
+      }
+
+      // Create relationship context
+      const relationshipContext = `Current relationship with ${relationship.entity.name}: Trust=${relationship.trustLevel.toFixed(2)}, Intimacy=${relationship.intimacyLevel.toFixed(2)}. Last interaction: ${relationship.lastInteraction?.toISOString() || 'never'}`;
+
+      // Get recent relationship history for context
+      const recentMemories = await this.getRecentRelationshipMemories(relationship.id, 5);
+      const relationshipHistory =
+        recentMemories.length > 0
+          ? recentMemories
+              .map(
+                (m) =>
+                  `${m.createdAt.toISOString().slice(0, 10)}: ${(m.searchText || '').substring(0, 100)}...`,
+              )
+              .join('\n')
+          : 'No recent interaction history available.';
+
+      // Use BAML function for intelligent analysis instead of hardcoded patterns
+      const { b } = await import('../../baml_client');
+      const relationshipAnalysis = await b.AnalyzeRelationshipImpact(
+        content,
+        padValues,
+        relationshipContext,
+        relationship.trustLevel,
+        relationship.intimacyLevel,
+        relationshipHistory,
+      );
+
+      // Convert BAML analysis to expected format
+      const trustChange = relationshipAnalysis.trustImpact;
+      const intimacyChange = relationshipAnalysis.intimacyImpact;
+      const hasSignificantChange = Math.abs(trustChange) > 0.1 || Math.abs(intimacyChange) > 0.1;
+
+      return {
+        success: true,
+        detected: {
+          hasSignificantChange,
+          trustChange,
+          intimacyChange,
+          confidence: relationshipAnalysis.significanceLevel,
+          indicators: relationshipAnalysis.reasoningChain,
+        },
+        analysis: {
+          trustLevelChange:
+            trustChange > 0.2
+              ? 'significant_increase'
+              : trustChange > 0.1
+                ? 'moderate_increase'
+                : trustChange < -0.2
+                  ? 'significant_decrease'
+                  : trustChange < -0.1
+                    ? 'moderate_decrease'
+                    : 'minimal',
+          intimacyChange:
+            intimacyChange > 0.3
+              ? 'significant_increase'
+              : intimacyChange > 0.1
+                ? 'moderate_increase'
+                : intimacyChange < -0.3
+                  ? 'significant_decrease'
+                  : intimacyChange < -0.1
+                    ? 'moderate_decrease'
+                    : 'minimal',
+          reasoning: `${relationshipAnalysis.contentCategory}: ${relationshipAnalysis.reasoningChain.join(' → ')}`,
+        },
+        recommendation: hasSignificantChange
+          ? 'Use updateEmotionalBond to apply these changes'
+          : 'No significant changes detected',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        detected: {
+          hasSignificantChange: false,
+          trustChange: 0,
+          intimacyChange: 0,
+          confidence: 0,
+          indicators: [],
+        },
+        analysis: {
+          trustLevelChange: 'minimal',
+          intimacyChange: 'minimal',
+          reasoning: 'Analysis failed',
+        },
+        recommendation: 'Retry analysis or check input parameters',
+      };
+    }
+  }
+
+  /**
    * Gottman's 5:1 ratio - actually validated research
    * Stable relationships need 5 positive interactions for every 1 negative
    */

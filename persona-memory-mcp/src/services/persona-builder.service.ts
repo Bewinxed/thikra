@@ -1,25 +1,32 @@
 import type { Persona, PrismaClient } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { b } from '../../baml_client';
+import type {
+  DesiresExtractionResult,
+  EmotionalExtractionResult,
+  IdentityExtractionResult,
+  PhysicalExtractionResult,
+  SpeechExtractionResult,
+} from '../../baml_client/types';
 import { PromptCache } from '../utils/prompt-cache';
 import type { EmbeddingService } from './embedding.service';
 
-// Multi-pass extraction result following TODO.md Phase 4
-// Types match BAML nullable outputs and convert to Prisma optional inputs
+// Multi-pass extraction result using BAML types as source of truth
+// Simple objects that will be mapped to database creates with personaId added
 interface ExtractionResult {
   identityComponents: Array<{
     componentType: string;
     content: string;
     importance: number;
     isNegotiable: boolean;
-    formedThrough?: string;
+    formedThrough?: string | null;
   }>;
   physicalAttributes: Array<{
-    bodyPartId?: number;
+    bodyPartId?: number | null;
     attributeType: string;
     attributeValue: string;
     isPermanent: boolean;
-    context?: string;
+    context?: string | null;
   }>;
   personalityTraits: Array<{
     traitCategory: string;
@@ -38,7 +45,7 @@ interface ExtractionResult {
     variations: string[];
   }>;
   desires: Array<{
-    desireCategoryId?: number;
+    desireCategoryId?: number | null;
     desireDescription: string;
     currentIntensity: number;
     fulfillmentLevel: number;
@@ -48,17 +55,17 @@ interface ExtractionResult {
   preferences: Array<{
     preferenceCategory: string;
     specificItem: string;
-    preferenceType: 'like' | 'dislike';
+    preferenceType: string;
     intensity: number;
-    reason?: string;
+    reason?: string | null;
   }>;
   boundaries: Array<{
-    boundaryTypeId?: number;
+    boundaryTypeId?: number | null;
     boundaryDescription: string;
     firmness: number;
-    appliesToEntityId?: string;
-    contextSpecific?: string;
-    violationResponse?: string;
+    appliesToEntityId?: string | null;
+    contextSpecific?: string | null;
+    violationResponse?: string | null;
   }>;
 }
 
@@ -145,8 +152,10 @@ export class PersonaBuilder {
   // Extract persona insights from a single message and update existing persona
   async extractFromSingleMessage(content: string, personaId: string): Promise<void> {
     console.log(`🔍 Extracting persona insights from message for persona ${personaId}`);
-    
-    const extraction = await this.multiPassExtraction(content);
+
+    // Get existing persona context to avoid redundant analysis
+    const existingPersona = await this.getExistingPersonaContext(personaId);
+    const extraction = await this.contextAwareMultiPassExtraction(content, existingPersona);
     await this.saveExtractionResults(personaId, extraction);
   }
 
@@ -199,35 +208,121 @@ export class PersonaBuilder {
     return result;
   }
 
+  // Context-aware multi-pass extraction to avoid redundant analysis
+  async contextAwareMultiPassExtraction(
+    content: string,
+    existingPersona: Awaited<ReturnType<typeof this.getExistingPersonaContext>>,
+  ): Promise<ExtractionResult> {
+    try {
+      // Run extractions conditionally but maintain proper types
+      const identityResult =
+        existingPersona.identityComponents.length > 5
+          ? null
+          : await this.cachedExtract<IdentityExtractionResult>(
+              'ExtractIdentityComponents',
+              content,
+              () => b.ExtractIdentityComponents(content),
+            );
+
+      const physicalResult =
+        existingPersona.physicalAttributes.length > 3
+          ? null
+          : await this.cachedExtract<PhysicalExtractionResult>(
+              'ExtractPhysicalAttributes',
+              content,
+              () => b.ExtractPhysicalAttributes(content),
+            );
+
+      const emotionalResult = await this.cachedExtract<EmotionalExtractionResult>(
+        'ExtractEmotionalPatterns',
+        content,
+        () => b.ExtractEmotionalPatterns(content),
+      );
+
+      const speechResult =
+        existingPersona.speechPatterns.length > 4
+          ? null
+          : await this.cachedExtract<SpeechExtractionResult>('ExtractSpeechPatterns', content, () =>
+              b.ExtractSpeechPatterns(content),
+            );
+
+      const desiresResult = await this.cachedExtract<DesiresExtractionResult>(
+        'ExtractDesiresAndBoundaries',
+        content,
+        () => b.ExtractDesiresAndBoundaries(content),
+      );
+
+      // Combine all results using correct BAML property names
+      return {
+        identityComponents: identityResult?.components || [],
+        physicalAttributes: physicalResult?.attributes || [],
+        personalityTraits: emotionalResult?.personalityTraits || [], // EmotionalExtractionResult has personalityTraits
+        speechPatterns: speechResult?.speechPatterns || [], // SpeechExtractionResult has speechPatterns
+        desires: desiresResult?.desires || [],
+        preferences: desiresResult?.preferences || [], // DesiresExtractionResult also has preferences
+        boundaries: desiresResult?.boundaries || [],
+      };
+    } catch (error) {
+      console.error('Context-aware multi-pass extraction failed:', error);
+      // Fallback to regular extraction
+      return this.multiPassExtraction(content);
+    }
+  }
+
+  // Get existing persona context to inform extraction decisions
+  async getExistingPersonaContext(personaId: string) {
+    const [identityComponents, physicalAttributes, speechPatterns] = await Promise.all([
+      this.prisma.identityComponent.findMany({
+        where: { personaId },
+        take: 10, // Limit to prevent huge context
+        select: { id: true, componentType: true },
+      }),
+      this.prisma.physicalAttribute.findMany({
+        where: { personaId },
+        take: 10,
+        select: { id: true, attributeType: true },
+      }),
+      this.prisma.speechPattern.findMany({
+        where: { personaId },
+        take: 10,
+        select: { id: true, patternType: true },
+      }),
+    ]);
+
+    return {
+      identityComponents,
+      physicalAttributes,
+      speechPatterns,
+    };
+  }
+
   // Multi-pass extraction following TODO.md specification
   private async multiPassExtraction(content: string): Promise<ExtractionResult> {
     try {
-      // Check cache first for all extractions
-      const cacheKey = `persona_builder_${content}`;
-
       // BATCH PROCESSING: Run all 5 extraction passes in parallel instead of sequentially
-      const [identityResult, physicalResult, emotionalResult, speechResult, desiresResult] = await Promise.all([
-        // Pass 1: Identity Components
-        this.cachedExtract('ExtractIdentityComponents', content, () =>
-          b.ExtractIdentityComponents(content),
-        ),
-        // Pass 2: Physical Attributes
-        this.cachedExtract('ExtractPhysicalAttributes', content, () =>
-          b.ExtractPhysicalAttributes(content),
-        ),
-        // Pass 3: Emotional Patterns
-        this.cachedExtract('ExtractEmotionalPatterns', content, () =>
-          b.ExtractEmotionalPatterns(content),
-        ),
-        // Pass 4: Speech Patterns
-        this.cachedExtract('ExtractSpeechPatterns', content, () =>
-          b.ExtractSpeechPatterns(content),
-        ),
-        // Pass 5: Desires and Boundaries
-        this.cachedExtract('ExtractDesiresAndBoundaries', content, () =>
-          b.ExtractDesiresAndBoundaries(content),
-        ),
-      ]);
+      const [identityResult, physicalResult, emotionalResult, speechResult, desiresResult] =
+        await Promise.all([
+          // Pass 1: Identity Components
+          this.cachedExtract('ExtractIdentityComponents', content, () =>
+            b.ExtractIdentityComponents(content),
+          ),
+          // Pass 2: Physical Attributes
+          this.cachedExtract('ExtractPhysicalAttributes', content, () =>
+            b.ExtractPhysicalAttributes(content),
+          ),
+          // Pass 3: Emotional Patterns
+          this.cachedExtract('ExtractEmotionalPatterns', content, () =>
+            b.ExtractEmotionalPatterns(content),
+          ),
+          // Pass 4: Speech Patterns
+          this.cachedExtract('ExtractSpeechPatterns', content, () =>
+            b.ExtractSpeechPatterns(content),
+          ),
+          // Pass 5: Desires and Boundaries
+          this.cachedExtract('ExtractDesiresAndBoundaries', content, () =>
+            b.ExtractDesiresAndBoundaries(content),
+          ),
+        ]);
 
       return {
         identityComponents: identityResult.components.map((c) => ({
@@ -300,7 +395,7 @@ export class PersonaBuilder {
   }
 
   // Save extraction results to database using actual schema models
-  private async saveExtractionResults(personaId: string, results: ExtractionResult): Promise<void> {
+  async saveExtractionResults(personaId: string, results: ExtractionResult): Promise<void> {
     // Save identity components (use upsert to handle duplicates)
     for (const component of results.identityComponents) {
       await this.prisma.identityComponent.upsert({
@@ -407,9 +502,22 @@ export class PersonaBuilder {
       });
     }
 
-    // Initialize persona state
-    await this.prisma.personaState.create({
-      data: {
+    // Initialize persona state (upsert to handle duplicate calls)
+    await this.prisma.personaState.upsert({
+      where: {
+        personaId_stateKey: {
+          personaId,
+          stateKey: 'initialized',
+        },
+      },
+      update: {
+        stateValue: new Date().toISOString(),
+        lastUpdated: new Date(),
+        updateCount: {
+          increment: 1,
+        },
+      },
+      create: {
         personaId,
         stateKey: 'initialized',
         stateValue: new Date().toISOString(),

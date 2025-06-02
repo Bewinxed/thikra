@@ -14,7 +14,7 @@ class MemoryClassification {
 }
 
 function ClassifyMemoryType(content: string, context: string) -> MemoryClassification {
-  client OpenRouterGPT4oMini
+  client OpenRouterMistralSmall
   
   prompt #"
     Analyze this content and classify what type of memory it represents:
@@ -45,24 +45,28 @@ function AssessContentSignificance(
   speakerRole: string,
   context: string
 ) -> ContentSignificance {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
-    Assess the significance of this content for memory formation.
+    Assess the significance of this content for memory formation based on psychological principles.
     
-    Consider:
-    - Emotional intensity and impact
-    - Personal relevance and meaning  
-    - Uniqueness or memorability
-    - Relationship importance
+    Consider these factors and their impact on memory significance:
+    - Emotional intensity and impact (higher emotion = higher significance)
+    - Personal relevance and meaning to the individual
+    - Uniqueness or memorability of the content
+    - Relationship importance and social dynamics
     - Life-changing or defining moments
     - Learning or growth opportunities
+    - Contextual intensity and situational importance
+    - Novelty and deviation from routine interactions
     
     Content: {{ content }}
     Speaker Role: {{ speakerRole }}
     Context: {{ context }}
     
-    Provide a nuanced assessment based on psychological principles of memory formation.
+    Analyze the context provided to understand the situational intensity and emotional weight.
+    Scale significance from 0.0 (mundane, forgettable) to 1.0 (life-changing, unforgettable).
+    Be sensitive to contextual cues that indicate importance or intensity without being overly generous.
     
     {{ ctx.output_format }}
   "#
@@ -76,7 +80,7 @@ class ContentTags {
 }
 
 function GenerateContentTags(content: string) -> ContentTags {
-  client OpenRouterGPT4oMini
+  client OpenRouterMistralSmall
   
   prompt #"
     Generate comprehensive tags for this content to aid in memory retrieval and association.
@@ -103,7 +107,7 @@ class ContentMeaningfulness {
 }
 
 function CheckContentMeaningfulness(content: string) -> ContentMeaningfulness {
-  client OpenRouterGPT4oMini
+  client OpenRouterMistralSmall
   
   prompt #"
     Analyze whether this content is meaningful enough to warrant creating a memory.
@@ -138,7 +142,7 @@ class EmotionalContent {
 }
 
 function CheckEmotionalContent(content: string) -> EmotionalContent {
-  client OpenRouterGPT4oMini
+  client OpenRouterMistralSmall
   
   prompt #"
     Analyze whether this content contains emotional elements that warrant emotional analysis.
@@ -167,7 +171,7 @@ class RelevanceAnalysis {
 }
 
 function CalculateMemoryRelevance(memoryContent: string, query: string) -> RelevanceAnalysis {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Analyze how relevant this memory content is to the given query across all languages and cultural contexts.
@@ -197,7 +201,7 @@ class EntityRelevance {
 }
 
 function CalculateEntityRelevance(entityInfo: string, query: string) -> EntityRelevance {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Analyze how relevant this entity is to the given query context across all languages and cultural contexts.
@@ -228,7 +232,7 @@ class ReinforcementBoost {
 }
 
 function CalculateReinforcementBoost(memoryContext: string) -> ReinforcementBoost {
-  client OpenRouterGPT4oMini
+  client LargeModelFallback
   
   prompt #"
     Calculate how much to boost a memory's strength based on reinforcement from related memories.
@@ -258,7 +262,7 @@ class TemporalRelevance {
 }
 
 function CheckTemporalRelevance(query: string) -> TemporalRelevance {
-  client OpenRouterGPT4oMini
+  client OpenRouterMistralSmall
   
   prompt #"
     Analyze whether this query has temporal aspects that warrant time-based memory retrieval.
@@ -287,7 +291,7 @@ class QueryModality {
 }
 
 function AnalyzeQueryModality(query: string) -> QueryModality {
-  client OpenRouterGPT4oMini
+  client OpenRouterMistralSmall
   
   prompt #"
     Analyze what type of content modality this query is asking about or referring to.

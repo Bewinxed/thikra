@@ -51,7 +51,7 @@ class RelationshipImpact {
 
 // Function to analyze emotions in text
 function AnalyzeEmotions(text: string) -> EmotionAnalysis {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Analyze the emotional content of the following text. Detect all emotions present based on:
@@ -81,7 +81,7 @@ function AnalyzeEmotions(text: string) -> EmotionAnalysis {
 
 // Function to extract emotion patterns over time
 function ExtractEmotionalJourney(messages: string[]) -> EmotionalTransition[] {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Analyze the emotional journey across these messages in chronological order.
@@ -107,7 +107,7 @@ function ExtractEmotionalJourney(messages: string[]) -> EmotionalTransition[] {
 
 // Function to estimate PAD values for custom emotions
 function EstimatePADValues(emotionName: string, context: string) -> PADValues {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     You are an emotion analysis expert. Estimate PAD (Pleasure-Arousal-Dominance) values for the emotion "{{ emotionName }}" based on the context: "{{ context }}".
@@ -127,9 +127,12 @@ function EstimatePADValues(emotionName: string, context: string) -> PADValues {
 function AnalyzeRelationshipImpact(
   message: string,
   currentPAD: PADValues,
-  relationshipContext: string
+  relationshipContext: string,
+  currentTrustLevel: float,
+  currentIntimacyLevel: float,
+  relationshipHistory: string
 ) -> RelationshipImpact {
-  client OpenRouterHaiku
+  client LargeModelFallback
   
   prompt #"
     Analyze how this message might impact the relationship between the participants.
@@ -144,34 +147,56 @@ function AnalyzeRelationshipImpact(
     - Arousal: {{ currentPAD.arousal }} (0=calm, 1=excited)
     - Dominance: {{ currentPAD.dominance }} (-1=submissive, 1=dominant)
     
+    Current relationship state:
+    - Trust Level: {{ currentTrustLevel }} (0.0=no trust, 1.0=complete trust)
+    - Intimacy Level: {{ currentIntimacyLevel }} (0.0=distant, 1.0=very close)
+    
     Relationship context:
     """
     {{ relationshipContext }}
     """
     
+    Relationship history (recent interactions):
+    """
+    {{ relationshipHistory }}
+    """
+    
     Analyze the relationship impact based on:
     
     1. **Trust Impact**: Does this message build or damage trust?
+       - Consider current trust level ({{ currentTrustLevel }}): 
+         * Low trust (< 0.3): More volatile to negative changes, larger positive impact from trust-building
+         * High trust (> 0.7): More resilient to minor issues, smaller positive gains
        - Positive: honesty, reliability, keeping promises, vulnerability
        - Negative: lies, broken promises, betrayal, manipulation
     
     2. **Intimacy Impact**: Does this create closeness or distance?
+       - Consider current intimacy level ({{ currentIntimacyLevel }}):
+         * Low intimacy (< 0.3): More room for growth, bigger impact from sharing
+         * High intimacy (> 0.7): Smaller incremental changes, focus on depth
        - Positive: sharing personal details, emotional support, understanding
        - Negative: rejection, coldness, avoiding depth, dismissiveness
     
     3. **Attraction Impact**: Does this increase or decrease appeal?
+       - Factor in relationship history and current emotional state
        - Positive: appreciation, desire, admiration, playfulness
        - Negative: criticism, disgust, boredom, rejection
     
     4. **Power Dynamic Shift**: How does this affect dominance/submission?
        - Consider: control attempts, compliance, defiance, leadership
+       - Factor in current PAD dominance level and relationship patterns
     
     5. **Content Category**: What type of interaction is this?
        - positive_interaction, boundary_test, conflict, intimate_moment, 
        - trust_building, trust_violation, playful_banter, serious_discussion, etc.
+       - Consider relationship trajectory from history
     
-    Consider Gottman's research: negative interactions have 5x impact of positive ones.
-    Consider parasocial relationship dynamics and LLM-human interaction patterns.
+    **Important Context Considerations**:
+    - Gottman's research: negative interactions have 5x impact of positive ones
+    - Consider parasocial relationship dynamics and LLM-human interaction patterns
+    - Factor in relationship development stage based on current trust/intimacy levels
+    - Use relationship history to identify patterns and avoid repetitive assessments
+    - Consider emotional state context for more nuanced impact assessment
     
     Provide step-by-step reasoning for your assessment.
     

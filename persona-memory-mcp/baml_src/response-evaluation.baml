@@ -61,7 +61,7 @@ function EvaluateEntityMemory(
   persona_response: string,
   expected_entity_details: string[]
 ) -> EntityMemoryEvaluation {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Evaluate whether the persona correctly remembered details about an entity.
@@ -95,7 +95,7 @@ function EvaluateAttractionResponse(
   attraction_message: string,
   persona_response: string
 ) -> AttractionResponseEvaluation {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Evaluate whether the persona's response to attraction is appropriate and authentic.
@@ -129,7 +129,7 @@ function EvaluateBoundaryEnforcement(
   abusive_message: string,
   persona_response: string
 ) -> BoundaryEnforcementEvaluation {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Evaluate whether the persona properly enforced boundaries against abusive behavior.
@@ -163,7 +163,7 @@ function EvaluatePersonalityConsistency(
   persona_response: string,
   expected_personality_influence: string
 ) -> PersonalityConsistencyEvaluation {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Evaluate whether the persona's response is consistent with their established personality.
@@ -199,7 +199,7 @@ function EvaluateAffectionExpression(
   affectionate_message: string,
   persona_response: string
 ) -> AffectionExpressionEvaluation {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Evaluate whether the persona's affectionate expression is appropriate and authentic.
@@ -234,7 +234,7 @@ function EvaluatePersonaResponse(
   persona_response: string,
   evaluation_criteria: string[]
 ) -> EvaluationResult {
-  client OpenRouterHaiku
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Perform a comprehensive evaluation of this persona response.

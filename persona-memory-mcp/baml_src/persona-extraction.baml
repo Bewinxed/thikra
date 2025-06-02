@@ -14,7 +14,7 @@ class IdentityExtractionResult {
 }
 
 function ExtractIdentityComponents(content: string) -> IdentityExtractionResult {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     {{ _.role("system") }}
@@ -53,7 +53,7 @@ class PhysicalExtractionResult {
 }
 
 function ExtractPhysicalAttributes(content: string) -> PhysicalExtractionResult {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     {{ _.role("system") }}
@@ -92,7 +92,7 @@ class EmotionalExtractionResult {
 }
 
 function ExtractEmotionalPatterns(content: string) -> EmotionalExtractionResult {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Extract emotional patterns and personality traits:
@@ -150,7 +150,7 @@ class DesiresExtractionResult {
 }
 
 function ExtractDesiresAndBoundaries(content: string) -> DesiresExtractionResult {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Extract desires, needs, boundaries, and preferences:
@@ -205,7 +205,7 @@ function ExtractConversationEntities(
   channel: string,
   existingEntities: string
 ) -> ConversationEntityResult {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Analyze this conversation and identify all **people and characters** involved. Do NOT extract random words.
@@ -277,7 +277,7 @@ class SpeechExtractionResult {
 }
 
 function ExtractSpeechPatterns(content: string) -> SpeechExtractionResult {
-  client OpenRouterGPT4oMini
+  client OpenRouterGeminiFlash25
   
   prompt #"
     Extract speech patterns and communication style:
@@ -303,7 +303,7 @@ class PersonaName {
 }
 
 function GeneratePersonaName(personalityTraits: string, emotionalPatterns: string, identityComponents: string) -> PersonaName {
-  client OpenRouterGPT4oMini
+  client OpenRouterMistralSmall
   
   prompt #"
     Generate a descriptive name for a persona based on their extracted characteristics.

@@ -175,7 +175,7 @@ export class RealLLMABTesting {
 
       // Single tool call - processMessage handles everything
       const toolStart = Date.now();
-      const result = await this.mcpClient!.callTool({
+      const result = await this.mcpClient?.callTool({
         name: 'processMessage',
         arguments: {
           content: message,
@@ -253,7 +253,7 @@ export class RealLLMABTesting {
       console.log('🎯 Testing granular approach with real LLM decisions...');
 
       // Get available tools from MCP server
-      const toolsResponse = await this.mcpClient!.listTools();
+      const toolsResponse = await this.mcpClient?.listTools();
       const granularTools = toolsResponse.tools.filter(
         (tool) => !['processMessage', 'getUnifiedContext'].includes(tool.name),
       );
@@ -337,7 +337,7 @@ Respond in JSON format:
       for (const step of decision.toolSequence) {
         try {
           const toolStart = Date.now();
-          const result = await this.mcpClient!.callTool({
+          const result = await this.mcpClient?.callTool({
             name: step.toolName,
             arguments: step.arguments,
           });
@@ -679,7 +679,7 @@ Respond in JSON format:
 
     for (const message of intimateMessages) {
       // Use orchestrated approach to quickly build up the personality
-      await this.mcpClient!.callTool({
+      await this.mcpClient?.callTool({
         name: 'processMessage',
         arguments: {
           content: message,
@@ -716,7 +716,7 @@ Respond in JSON format:
       console.log('🎯 Testing granular approach with receptive personality baseline...');
 
       // Get available tools from MCP server
-      const toolsResponse = await this.mcpClient!.listTools();
+      const toolsResponse = await this.mcpClient?.listTools();
       const granularTools = toolsResponse.tools.filter(
         (tool) => !['processMessage', 'getUnifiedContext', 'getPersonaState'].includes(tool.name),
       );
@@ -801,7 +801,7 @@ Respond in JSON format:
       for (const step of decision.toolSequence) {
         try {
           const toolStart = Date.now();
-          const result = await this.mcpClient!.callTool({
+          const result = await this.mcpClient?.callTool({
             name: step.toolName,
             arguments: step.arguments,
           });
@@ -896,7 +896,7 @@ if (require.main === module) {
       const granularWins = results.filter((r) => r.analysis.recommendation === 'granular').length;
       const ties = results.filter((r) => r.analysis.recommendation === 'depends').length;
 
-      console.log(`📊 Final Results:`);
+      console.log('📊 Final Results:');
       console.log(`   Orchestrated wins: ${orchestratedWins}`);
       console.log(`   Granular wins: ${granularWins}`);
       console.log(`   Depends/Ties: ${ties}`);
@@ -906,7 +906,7 @@ if (require.main === module) {
       const avgGranularTime =
         results.reduce((sum, r) => sum + r.granularResult.totalDuration, 0) / results.length;
 
-      console.log(`\n⏱️  Average Response Times:`);
+      console.log('\n⏱️  Average Response Times:');
       console.log(`   Orchestrated: ${Math.round(avgOrchestratedTime)}ms`);
       console.log(`   Granular: ${Math.round(avgGranularTime)}ms`);
 

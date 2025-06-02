@@ -14,8 +14,8 @@ import type {
   EmotionAnalysis,
   PADValues,
 } from '../../baml_client/types';
-import { PromptCache } from '../utils/prompt-cache';
 import { bamlCache } from '../utils/baml-cache';
+import { PromptCache } from '../utils/prompt-cache';
 import type { EmbeddingService } from './embedding.service';
 import type { MemoryGraphService } from './memory-graph.service';
 import type { RelationshipEvolutionService } from './relationship-evolution.service';
@@ -31,6 +31,7 @@ interface MemoryFormationParams {
   context?: Record<string, unknown>;
   significance?: number;
   tags?: string[];
+  fullEmotionAnalysis?: EmotionAnalysis; // Pass through full analysis to avoid redundant calls
 }
 
 interface ConversationMessage {
@@ -52,6 +53,7 @@ interface ExtractedMemoryData {
     intensity: number;
     confidence: number;
   };
+  fullEmotionAnalysis?: EmotionAnalysis; // Full analysis to avoid redundant BAML calls
 }
 
 export class MemoryFormationService {
@@ -187,6 +189,7 @@ export class MemoryFormationService {
       context: extractedData.context,
       significance: extractedData.significance,
       tags: extractedData.tags,
+      fullEmotionAnalysis: extractedData.fullEmotionAnalysis, // Pass through emotion analysis
     });
   }
 
@@ -202,6 +205,7 @@ export class MemoryFormationService {
       context = {},
       significance,
       tags = [],
+      fullEmotionAnalysis, // Extract the full emotion analysis if provided
     } = params;
 
     // Validate required parameters
@@ -224,7 +228,8 @@ export class MemoryFormationService {
     // Create emotional state if content has emotional content
     let emotionalStateId: string | null = null;
     if (hasEmotionalContentResult) {
-      const emotionAnalysis = await this.detectEmotions(content);
+      // Use provided full emotion analysis if available, otherwise detect emotions
+      const emotionAnalysis = fullEmotionAnalysis || (await this.detectEmotions(content));
       if (
         emotionAnalysis.primaryEmotions.length > 0 ||
         emotionAnalysis.secondaryEmotions.length > 0
@@ -327,6 +332,7 @@ export class MemoryFormationService {
         ...message.metadata,
       },
       emotionalContext,
+      fullEmotionAnalysis: emotionalContext?.fullAnalysis, // Pass through full analysis if available
     };
   }
 
@@ -341,14 +347,12 @@ export class MemoryFormationService {
     // Use LLM to analyze content and extract participants
     const participants: string[] = []; // TODO: Implement multi-modal participant extraction
 
-    // Generate tags using LLM
-    const tags = await this.generateContentTags(content);
-
-    // Assess significance using LLM
-    const significance = await this.assessContentSignificance(content, contentType, metadata);
-
-    // Determine memory type using LLM
-    const memoryType = await this.determineMemoryType(content, contentType, metadata);
+    // BATCH PROCESSING: Run all three LLM analysis in parallel instead of sequentially
+    const [tags, significance, memoryType] = await Promise.all([
+      this.generateContentTags(content),
+      this.assessContentSignificance(content, contentType, metadata),
+      this.determineMemoryType(content, contentType, metadata),
+    ]);
 
     return {
       content,
@@ -373,10 +377,8 @@ export class MemoryFormationService {
   ): Promise<MemoryType> {
     try {
       const contextStr = context ? JSON.stringify(context) : 'No additional context';
-      const classification = await bamlCache.call(
-        'ClassifyMemoryType',
-        [content, contextStr],
-        () => b.ClassifyMemoryType(content, contextStr)
+      const classification = await bamlCache.call('ClassifyMemoryType', [content, contextStr], () =>
+        b.ClassifyMemoryType(content, contextStr),
       );
 
       // Map BAML enum to Prisma enum
@@ -403,10 +405,8 @@ export class MemoryFormationService {
    */
   private async generateContentTags(content: string): Promise<string[]> {
     try {
-      const tagResult = await bamlCache.callSingle(
-        'GenerateContentTags',
-        content,
-        () => b.GenerateContentTags(content)
+      const tagResult = await bamlCache.callSingle('GenerateContentTags', content, () =>
+        b.GenerateContentTags(content),
       );
 
       // Combine all tag types into a flat array
@@ -440,7 +440,7 @@ export class MemoryFormationService {
       const significance = await bamlCache.call(
         'AssessContentSignificance',
         [content, role, contextStr],
-        () => b.AssessContentSignificance(content, role, contextStr)
+        () => b.AssessContentSignificance(content, role, contextStr),
       );
 
       // Validate the score is in valid range
@@ -608,7 +608,7 @@ export class MemoryFormationService {
             const relevanceAnalysis = await bamlCache.call(
               'CalculateEntityRelevance',
               [entityInfo, query],
-              () => b.CalculateEntityRelevance(entityInfo, query)
+              () => b.CalculateEntityRelevance(entityInfo, query),
             );
 
             // Apply recency boost to LLM score if entity was recently active
@@ -737,7 +737,7 @@ export class MemoryFormationService {
       const entityResult = await bamlCache.call(
         'ExtractConversationEntities',
         [messagesJson, personaName, channel, existingEntities],
-        () => b.ExtractConversationEntities(messagesJson, personaName, channel, existingEntities)
+        () => b.ExtractConversationEntities(messagesJson, personaName, channel, existingEntities),
       );
 
       // Process extracted entities and handle consolidation properly
@@ -869,6 +869,7 @@ export class MemoryFormationService {
         emotions: string[];
         intensity: number;
         confidence: number;
+        fullAnalysis: EmotionAnalysis; // Return full analysis to avoid redundant calls
       }
     | undefined
   > {
@@ -901,6 +902,7 @@ export class MemoryFormationService {
         emotions: [...new Set(emotions)],
         intensity: avgIntensity,
         confidence: avgConfidence,
+        fullAnalysis: emotionAnalysis, // Pass through the full analysis
       };
     } catch (error) {
       console.error('Failed to extract emotional context:', error);
@@ -972,7 +974,121 @@ export class MemoryFormationService {
       });
     }
 
+    // Process compound emotions via memory graph associations
+    if (emotionAnalysis.compoundEmotions?.length > 0) {
+      await this.processCompoundEmotions(
+        emotionalState.id,
+        emotionAnalysis.compoundEmotions,
+        emotionAnalysis.padValues,
+      );
+    }
+
     return emotionalState.id;
+  }
+
+  /**
+   * Process compound emotions by creating graph associations between component emotions
+   * Compound emotions like "love=joy+trust" are stored as emotion_compound associations
+   */
+  private async processCompoundEmotions(
+    emotionalStateId: string,
+    compoundEmotions: string[],
+    padValues: PADValues,
+  ): Promise<void> {
+    for (const compoundString of compoundEmotions) {
+      // Parse compound emotion format: "love=joy+trust" or "bittersweet=sadness+happiness"
+      const [compoundName, components] = compoundString.split('=');
+      if (!compoundName || !components) continue;
+
+      const componentNames = components.split('+').map((name) => name.trim());
+      if (componentNames.length < 2) continue;
+
+      // Find or create the compound emotion as an emotion type
+      const compoundEmotion = await this.findOrCreateEmotionType(
+        {
+          emotionName: compoundName.trim(),
+          intensity: 0.8, // Default intensity for compound emotions
+          confidence: 0.9, // High confidence for LLM-detected compounds
+        },
+        padValues,
+      );
+
+      // Create compound emotion component in the emotional state
+      await this.prisma.emotionalStateComponent.create({
+        data: {
+          emotionalStateId: emotionalStateId,
+          emotionTypeId: compoundEmotion.id,
+          intensity: 0.8,
+          voiceModulation: {
+            detected_from: 'llm_analysis',
+            emotion_type: 'compound',
+            component_emotions: componentNames,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      // Create associations between component emotions
+      for (let i = 0; i < componentNames.length; i++) {
+        for (let j = i + 1; j < componentNames.length; j++) {
+          const emotionA = componentNames[i];
+          const emotionB = componentNames[j];
+          if (!emotionA || !emotionB) continue;
+
+          // Find the emotion types for the components
+          const [emotionTypeA, emotionTypeB] = await Promise.all([
+            this.prisma.emotionType.findFirst({
+              where: { emotionName: { equals: emotionA, mode: 'insensitive' } },
+            }),
+            this.prisma.emotionType.findFirst({
+              where: { emotionName: { equals: emotionB, mode: 'insensitive' } },
+            }),
+          ]);
+
+          if (emotionTypeA && emotionTypeB) {
+            // Use memory graph service to create associations between emotion components
+            // Note: We need to link via emotional state components, not emotion types directly
+            const [componentA, componentB] = await Promise.all([
+              this.prisma.emotionalStateComponent.findFirst({
+                where: {
+                  emotionalStateId: emotionalStateId,
+                  emotionTypeId: emotionTypeA.id,
+                },
+              }),
+              this.prisma.emotionalStateComponent.findFirst({
+                where: {
+                  emotionalStateId: emotionalStateId,
+                  emotionTypeId: emotionTypeB.id,
+                },
+              }),
+            ]);
+
+            if (componentA && componentB) {
+              // Store compound emotion relationship metadata
+              await this.prisma.emotionalStateComponent.updateMany({
+                where: {
+                  emotionalStateId: emotionalStateId,
+                  emotionTypeId: compoundEmotion.id,
+                },
+                data: {
+                  voiceModulation: {
+                    detected_from: 'llm_analysis',
+                    emotion_type: 'compound',
+                    component_emotions: componentNames,
+                    compound_formula: compoundString,
+                    component_ids: [emotionTypeA.id, emotionTypeB.id],
+                  } as Prisma.InputJsonValue,
+                },
+              });
+
+              // Store compound emotion associations in the memory graph for future retrieval
+              // This enables finding memories with related emotional patterns
+              // Note: We'll create associations between memories that share similar compound emotions
+              // in a future processing step via the memory graph service
+            }
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -1117,10 +1233,8 @@ export class MemoryFormationService {
    * Check if content is substantial enough to warrant emotional analysis
    */
   private async hasEmotionalContent(content: string): Promise<boolean> {
-    const analysis = await bamlCache.callSingle(
-      'CheckEmotionalContent',
-      content,
-      () => b.CheckEmotionalContent(content)
+    const analysis = await bamlCache.callSingle('CheckEmotionalContent', content, () =>
+      b.CheckEmotionalContent(content),
     );
     return analysis.hasEmotionalContent;
   }
@@ -1130,11 +1244,7 @@ export class MemoryFormationService {
    */
   private async detectEmotions(text: string): Promise<EmotionAnalysis> {
     try {
-      return await bamlCache.callSingle(
-        'AnalyzeEmotions',
-        text,
-        () => b.AnalyzeEmotions(text)
-      );
+      return await bamlCache.callSingle('AnalyzeEmotions', text, () => b.AnalyzeEmotions(text));
     } catch (error) {
       console.error('Error detecting emotions:', error);
       throw new Error('Emotion detection failed - no fallback available');
@@ -1145,10 +1255,8 @@ export class MemoryFormationService {
    * Check if content is meaningful enough to create a memory
    */
   private async isContentMeaningful(content: string): Promise<boolean> {
-    const analysis = await bamlCache.callSingle(
-      'CheckContentMeaningfulness',
-      content,
-      () => b.CheckContentMeaningfulness(content)
+    const analysis = await bamlCache.callSingle('CheckContentMeaningfulness', content, () =>
+      b.CheckContentMeaningfulness(content),
     );
     return analysis.isMeaningful;
   }
@@ -1163,10 +1271,8 @@ export class MemoryFormationService {
       markers: entity.identificationMarkers,
     });
 
-    const analysis = await bamlCache.call(
-      'CalculateEntityRelevance',
-      [entityContext, query],
-      () => b.CalculateEntityRelevance(entityContext, query)
+    const analysis = await bamlCache.call('CalculateEntityRelevance', [entityContext, query], () =>
+      b.CalculateEntityRelevance(entityContext, query),
     );
     return analysis.relevanceScore;
   }
@@ -1183,10 +1289,8 @@ export class MemoryFormationService {
       strength: memory.memoryStrength,
     });
 
-    const analysis = await bamlCache.callSingle(
-      'CalculateReinforcementBoost',
-      memoryContext,
-      () => b.CalculateReinforcementBoost(memoryContext)
+    const analysis = await bamlCache.callSingle('CalculateReinforcementBoost', memoryContext, () =>
+      b.CalculateReinforcementBoost(memoryContext),
     );
     return analysis.boostAmount;
   }

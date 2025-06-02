@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   type CallToolRequest,
@@ -11,7 +12,10 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { PrismaClient } from '@prisma/client';
+import cors from 'cors';
+import express from 'express';
 import { z } from 'zod';
+import { b } from '../baml_client';
 import { AgenticMemoryRetrieval } from './services/agentic-retrieval.service';
 import { EmbeddingService } from './services/embedding.service';
 import { LLMService } from './services/llm.service';
@@ -110,8 +114,47 @@ const GetPersonaStateSchema = z.object({
 
 const IdentifyEntitySchema = z.object({
   entityName: z.string().describe('Name or identifier of the entity'),
-  entityType: z.enum(['human', 'ai', 'group', 'organization']).describe('Type of entity'),
+  entityType: z.enum(['human', 'llm', 'system', 'unknown']).describe('Type of entity'),
   description: z.string().optional().describe('Optional description of the entity'),
+});
+
+
+const StoreSimpleMemorySchema = z.object({
+  content: z.string().describe('The simple message content to store'),
+  personaId: z.string().describe('ID of the persona'),
+  entityId: z.string().optional().describe('ID of the entity sending the message'),
+  channel: z.string().optional().describe('Communication channel'),
+  sessionId: z.string().optional().describe('Session identifier'),
+});
+
+const StoreSignificantMemorySchema = z.object({
+  content: z.string().describe('The significant message content to store'),
+  personaId: z.string().describe('ID of the persona'),
+  entityId: z.string().optional().describe('ID of the entity sending the message'),
+  channel: z.string().optional().describe('Communication channel'),
+  sessionId: z.string().optional().describe('Session identifier'),
+  significance: z.number().optional().describe('Override significance score (0.0-1.0)'),
+});
+
+const ExtractEmotionalInsightsSchema = z.object({
+  content: z.string().describe('Content containing emotional information'),
+  personaId: z.string().describe('ID of the persona to update'),
+  memoryId: z.string().describe('ID of the memory this relates to'),
+});
+
+const DetectRelationshipShiftSchema = z.object({
+  content: z.string().describe('Content to analyze for relationship indicators'),
+  personaId: z.string().describe('ID of the persona'),
+  entityId: z.string().describe('ID of the other entity in the relationship'),
+  memoryId: z.string().describe('ID of the memory this relates to'),
+});
+
+const UpdateEmotionalBondSchema = z.object({
+  personaId: z.string().describe('ID of the persona'),
+  entityId: z.string().describe('ID of the other entity'),
+  trustChange: z.number().describe('Change in trust level (-1.0 to 1.0)'),
+  intimacyChange: z.number().describe('Change in intimacy level (-1.0 to 1.0)'),
+  reason: z.string().describe('Reason for the bond change'),
 });
 
 class PersonaMemoryMCPServer {
@@ -196,42 +239,32 @@ class PersonaMemoryMCPServer {
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
-        // TRACK 1: Orchestrated Tools (Simple, All-in-One)
-        {
-          name: 'processMessage',
-          description: `Process a complete message with automatic persona updating. 
-                       This is the SIMPLEST approach - one call handles everything:
-                       - Stores the memory with context analysis
-                       - Extracts persona insights (identity, physical, emotional, speech patterns)
-                       - Updates relationships and personality parameters
-                       - Creates semantic links for future context retrieval
-                       - Queues async processing for memory consolidation
-                       Perfect for: Real-time chat, simple integrations, reliable processing`,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              content: { type: 'string', description: 'The message content to process' },
-              personaId: { type: 'string', description: 'ID of the persona to update' },
-              entityId: { type: 'string', description: 'ID of the entity sending the message' },
-              channel: { type: 'string', description: 'Communication channel' },
-              sessionId: { type: 'string', description: 'Session identifier' },
-              timestamp: { type: 'string', description: 'ISO timestamp of the message' },
-              contentType: { type: 'string', description: 'Type of content (text, image, etc.)' },
-              participantEntityIds: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'IDs of participants in the conversation',
-              },
-            },
-            required: ['content', 'personaId'],
-          },
-        },
+        // All-in-one message processing
+        // {
+        //   name: 'processMessage',
+        //   description: `Processes a message completely in one operation. Stores memory, extracts persona insights, updates relationships and personality parameters, and creates semantic links.`,
+        //   inputSchema: {
+        //     type: 'object',
+        //     properties: {
+        //       content: { type: 'string', description: 'The message content to process' },
+        //       personaId: { type: 'string', description: 'ID of the persona to update' },
+        //       entityId: { type: 'string', description: 'ID of the entity sending the message' },
+        //       channel: { type: 'string', description: 'Communication channel' },
+        //       sessionId: { type: 'string', description: 'Session identifier' },
+        //       timestamp: { type: 'string', description: 'ISO timestamp of the message' },
+        //       contentType: { type: 'string', description: 'Type of content (text, image, etc.)' },
+        //       participantEntityIds: {
+        //         type: 'array',
+        //         items: { type: 'string' },
+        //         description: 'IDs of participants in the conversation',
+        //       },
+        //     },
+        //     required: ['content', 'personaId'],
+        //   },
+        // },
         {
           name: 'getUnifiedContext',
-          description: `Get comprehensive context for response generation.
-                       Retrieves memories, emotions, personality traits, relationships, and semantic links.
-                       Uses advanced agentic retrieval with multiple strategies.
-                       Perfect for: Response generation, context-aware conversations, comprehensive understanding`,
+          description: `Retrieves comprehensive context including memories, emotions, personality traits, relationships, and semantic links. Uses multi-strategy retrieval with reflection.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -264,8 +297,7 @@ class PersonaMemoryMCPServer {
         },
         {
           name: 'getPersonaState',
-          description: `Get current persona state overview including stats and last activity.
-                       Perfect for: Status checks, dashboard displays, persona management`,
+          description: `Returns current persona state overview including stats and last activity.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -275,30 +307,12 @@ class PersonaMemoryMCPServer {
           },
         },
 
-        // TRACK 2: Granular Tools (Advanced, LLM-Controlled)
         {
           name: 'storeMemory',
-          description: `Store a single memory with detailed control over memory formation.
+          description: `Store memory with automatic significance analysis. Chooses processing depth based on content importance.
                        
-                       WHEN TO USE:
-                       - You want precise control over memory creation
-                       - Building custom processing workflows
-                       - Message contains specific content that needs careful handling
-                       - You need to debug memory formation issues
-                       
-                       WHAT IT DOES:
-                       - Creates memory with LLM-driven content analysis
-                       - Extracts entities and emotional context
-                       - Calculates significance and memory type
-                       - Does NOT automatically update persona or relationships
-                       
-                       NEXT STEPS AFTER USING:
-                       - Use extractPersonaInsights if content reveals personality
-                       - Use setPersonaState if content affects current emotional state
-                       - Use getSemanticContext to find related memories
-                       - Consider searchMemories to check for similar experiences
-                       
-                       Perfect for: Custom workflows, debugging, selective memory storage`,
+                       Use when unsure about content significance - it automatically decides between fast/comprehensive processing.
+                       For better performance control, prefer storeSimpleMemory (fast) or storeSignificantMemory (comprehensive).`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -314,11 +328,51 @@ class PersonaMemoryMCPServer {
                 description: 'Participants involved in this memory',
               },
               context: { type: 'object', description: 'Additional context metadata' },
-              significance: { type: 'number', description: 'Significance score for the memory' },
+              significance: { type: 'number', description: 'Override significance score (0.0-1.0)' },
               tags: {
                 type: 'array',
                 items: { type: 'string' },
                 description: 'Tags to associate with the memory',
+              },
+            },
+            required: ['content', 'personaId'],
+          },
+        },
+        {
+          name: 'storeSimpleMemory',
+          description: `Fast memory storage (~2-3s) for routine content like greetings, confirmations, acknowledgments.
+                       
+                       Skips persona analysis and relationship processing for maximum efficiency.
+                       Use for: Brief exchanges, status updates, simple confirmations, casual chatter.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              content: { type: 'string', description: 'The simple message content to store' },
+              personaId: { type: 'string', description: 'ID of the persona' },
+              entityId: { type: 'string', description: 'ID of the entity sending the message' },
+              channel: { type: 'string', description: 'Communication channel' },
+              sessionId: { type: 'string', description: 'Session identifier' },
+            },
+            required: ['content', 'personaId'],
+          },
+        },
+        {
+          name: 'storeSignificantMemory',
+          description: `Comprehensive memory storage (~10-15s) for meaningful content that reveals personality or emotions.
+                       
+                       Includes full persona analysis, relationship processing, and semantic linking.
+                       Use for: Personal revelations, emotional content, relationship changes, important decisions.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              content: { type: 'string', description: 'The significant message content to store' },
+              personaId: { type: 'string', description: 'ID of the persona' },
+              entityId: { type: 'string', description: 'ID of the entity sending the message' },
+              channel: { type: 'string', description: 'Communication channel' },
+              sessionId: { type: 'string', description: 'Session identifier' },
+              significance: {
+                type: 'number',
+                description: 'Override significance score (0.0-1.0)',
               },
             },
             required: ['content', 'personaId'],
@@ -348,29 +402,10 @@ class PersonaMemoryMCPServer {
         },
         {
           name: 'extractPersonaInsights',
-          description: `Extract specific persona insights from content.
+          description: `Extract detailed persona insights from content when you need granular control over what gets analyzed.
                        
-                       WHEN TO USE:
-                       - After storeMemory when content reveals personality traits
-                       - User shares personal information, preferences, or values
-                       - Content shows emotional patterns or behavioral tendencies
-                       - You want to build/update the persona's identity profile
-                       
-                       WHAT IT ANALYZES:
-                       - Identity components (values, beliefs, self-perception)
-                       - Physical attributes and appearance descriptions  
-                       - Emotional patterns and typical responses
-                       - Speech patterns and communication style
-                       - Desires, goals, and aspirations
-                       - Boundaries and limits
-                       
-                       WORKFLOW PATTERN:
-                       1. storeMemory (capture the content)
-                       2. extractPersonaInsights (analyze personality aspects)
-                       3. setPersonaState (update current emotional/mental state if relevant)
-                       4. getSemanticContext (find related personality patterns)
-                       
-                       Perfect for: Building persona profiles, analyzing personality traits, selective insight extraction`,
+                       Use this when storeMemory isn't sufficient or you want to analyze existing content differently.
+                       Extracts identity, physical, emotional, speech patterns, desires, and boundaries.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -390,9 +425,7 @@ class PersonaMemoryMCPServer {
         },
         {
           name: 'setPersonaState',
-          description: `Set dynamic persona state (emotions, mental states, temporary conditions).
-                       Flexible key-value storage for any dynamic state the LLM wants to track.
-                       Perfect for: Tracking mood, current focus, temporary states, contextual information`,
+          description: `Sets ephemeral/temporary persona states like current mood, focus, or conversation context. NOT for personality traits or permanent attributes - use extractPersonaInsights for those.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -435,29 +468,91 @@ class PersonaMemoryMCPServer {
           },
         },
 
+        // STEP 3A: EMOTIONAL PROCESSING (For Vulnerable/Emotional Content)
+        {
+          name: 'extractEmotionalInsights',
+          description: `Extract deep emotional patterns and vulnerability markers from meaningful content.
+                       
+                       Specializes in discovering vulnerability thresholds, emotional guardedness patterns, trust formation dynamics, and anxiety manifestations. 
+                       Identifies how easily someone opens up, their protective behaviors, and stress response mechanisms.
+                       
+                       Particularly effective for content revealing personal struggles, relationship feelings, mental health patterns, or emotional reactions.
+                       Returns discovered emotional traits with confidence scores and supporting evidence.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              content: { type: 'string', description: 'Content containing emotional information' },
+              personaId: { type: 'string', description: 'ID of the persona to update' },
+              memoryId: { type: 'string', description: 'ID of the memory this relates to' },
+            },
+            required: ['content', 'personaId', 'memoryId'],
+          },
+        },
+        {
+          name: 'detectRelationshipShift',
+          description: `Analyze content for indicators of changing relationship dynamics and emotional connections.
+                       
+                       Detects trust level changes, intimacy shifts, emotional bond evolution, and communication comfort adjustments.
+                       Identifies expressions of feeling safe, different levels of vulnerability sharing, and relationship comfort changes.
+                       
+                       Returns detected relationship changes with confidence scores, specific indicators found, and reasoning for the assessment.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              content: {
+                type: 'string',
+                description: 'Content to analyze for relationship indicators',
+              },
+              personaId: { type: 'string', description: 'ID of the persona' },
+              entityId: {
+                type: 'string',
+                description: 'ID of the other entity in the relationship',
+              },
+              memoryId: { type: 'string', description: 'ID of the memory this relates to' },
+            },
+            required: ['content', 'personaId', 'entityId', 'memoryId'],
+          },
+        },
+        {
+          name: 'updateEmotionalBond',
+          description: `Apply detected relationship changes to update trust and intimacy levels between entities.
+                       
+                       Updates trust levels, intimacy progression, emotional safety parameters, and communication openness based on relationship evolution.
+                       Uses PAD emotional model integration with PersDyn personality dynamics and Gottman relationship research.
+                       
+                       Requires trust and intimacy change values (-1.0 to 1.0) with reasoning for the bond modification.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              personaId: { type: 'string', description: 'ID of the persona' },
+              entityId: { type: 'string', description: 'ID of the other entity' },
+              trustChange: { type: 'number', description: 'Change in trust level (-1.0 to 1.0)' },
+              intimacyChange: {
+                type: 'number',
+                description: 'Change in intimacy level (-1.0 to 1.0)',
+              },
+              reason: { type: 'string', description: 'Reason for the bond change' },
+            },
+            required: ['personaId', 'entityId', 'trustChange', 'intimacyChange', 'reason'],
+          },
+        },
+
         // ENTITY MANAGEMENT TOOLS
         {
           name: 'identifyEntity',
-          description: `Identify or register an entity (person, user, participant) in the conversation.
+          description: `Register or locate conversation participants for accurate memory association and relationship tracking.
                        
-                       WHEN TO USE:
-                       - Processing messages where participants need to be tracked
-                       - First time encountering a new person in conversation
-                       - Need to associate memories with specific entities
+                       Searches for existing entities by name and type, creates new entity records when needed.
+                       Essential for associating memories with specific participants and enabling relationship modeling.
                        
-                       WHAT IT DOES:
-                       - Searches for existing entities by name/description
-                       - Creates new entities if they don't exist
-                       - Returns entity ID for use in other tools
-                       
-                       Perfect for: Entity tracking, participant management, relationship modeling`,
+                       Returns entity ID for use in memory storage and relationship operations.`,
           inputSchema: {
             type: 'object',
             properties: {
               entityName: { type: 'string', description: 'Name or identifier of the entity' },
               entityType: {
                 type: 'string',
-                enum: ['human', 'ai', 'group', 'organization'],
+                enum: ['human', 'llm', 'system', 'unknown'],
                 description: 'Type of entity',
               },
               description: { type: 'string', description: 'Optional description of the entity' },
@@ -554,6 +649,46 @@ class PersonaMemoryMCPServer {
             };
           }
 
+          case 'storeSimpleMemory': {
+            const params = StoreSimpleMemorySchema.parse(args);
+            const result = await this.handleStoreSimpleMemory(params);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'storeSignificantMemory': {
+            const params = StoreSignificantMemorySchema.parse(args);
+            const result = await this.handleStoreSignificantMemory(params);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'extractEmotionalInsights': {
+            const params = ExtractEmotionalInsightsSchema.parse(args);
+            const result = await this.handleExtractEmotionalInsights(params);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'detectRelationshipShift': {
+            const params = DetectRelationshipShiftSchema.parse(args);
+            const result = await this.handleDetectRelationshipShift(params);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'updateEmotionalBond': {
+            const params = UpdateEmotionalBondSchema.parse(args);
+            const result = await this.handleUpdateEmotionalBond(params);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
           case 'identifyEntity': {
             const params = IdentifyEntitySchema.parse(args);
             const result = await this.handleIdentifyEntity(params);
@@ -577,7 +712,7 @@ class PersonaMemoryMCPServer {
         const duration = Date.now() - startTime;
 
         if (error instanceof z.ZodError) {
-          this.log('error', `Invalid parameters for tool call`, {
+          this.log('error', 'Invalid parameters for tool call', {
             requestId,
             toolName: request.params.name,
             duration,
@@ -589,7 +724,7 @@ class PersonaMemoryMCPServer {
           );
         }
 
-        this.log('error', `Tool execution failed`, {
+        this.log('error', 'Tool execution failed', {
           requestId,
           toolName: request.params.name,
           duration,
@@ -742,7 +877,10 @@ class PersonaMemoryMCPServer {
   }
 
   private async handleStoreMemory(params: z.infer<typeof StoreMemorySchema>) {
+    const startTime = Date.now();
+    
     try {
+      // Step 1: Store the memory
       const memory = await this.memoryFormation.createMultiModalMemory(
         params.personaId,
         params.content,
@@ -755,6 +893,33 @@ class PersonaMemoryMCPServer {
         },
       );
 
+      // Step 2: Extract persona insights automatically if significance is high enough
+      let personaInsights = null;
+      if (memory.significanceScore > 0.3) {
+        try {
+          const existingPersona = await this.personaBuilder.getExistingPersonaContext(params.personaId);
+          const extraction = await this.personaBuilder.contextAwareMultiPassExtraction(
+            params.content, 
+            existingPersona
+          );
+          await this.personaBuilder.saveExtractionResults(params.personaId, extraction);
+          
+          personaInsights = {
+            identityCount: extraction.identityComponents.length,
+            physicalCount: extraction.physicalAttributes.length,
+            speechCount: extraction.speechPatterns.length,
+            desireCount: extraction.desires.length,
+            boundaryCount: extraction.boundaries.length,
+            traitCount: extraction.personalityTraits.length,
+            preferenceCount: extraction.preferences.length,
+          };
+        } catch (error) {
+          console.warn('Persona extraction failed during storeMemory:', error);
+        }
+      }
+
+      const processingTime = Date.now() - startTime;
+
       return {
         success: true,
         memory: {
@@ -764,11 +929,15 @@ class PersonaMemoryMCPServer {
           significance: memory.significanceScore,
           createdAt: memory.createdAt.toISOString(),
         },
+        personaUpdates: personaInsights,
+        processingTimeMs: processingTime,
+        workflow: 'comprehensive', // Indicate this did full processing
       };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
+        processingTimeMs: Date.now() - startTime,
       };
     }
   }
@@ -810,31 +979,46 @@ class PersonaMemoryMCPServer {
 
   private async handleExtractPersonaInsights(params: z.infer<typeof ExtractPersonaInsightsSchema>) {
     try {
-      // Extract insights for the specific persona
-      await this.personaBuilder.extractFromSingleMessage(params.content, params.personaId);
+      // Get existing persona context to avoid redundant analysis
+      const existingPersona = await this.personaBuilder.getExistingPersonaContext(params.personaId);
+      
+      // Extract insights and get the actual results
+      const extraction = await this.personaBuilder.contextAwareMultiPassExtraction(
+        params.content, 
+        existingPersona
+      );
+      
+      // Save to database
+      await this.personaBuilder.saveExtractionResults(params.personaId, extraction);
 
-      // This is a simplified response - in reality we'd track the specific extractions
+      // Return the actual extracted data
       return {
         success: true,
         insights: {
-          identityComponents: 1,
-          physicalAttributes: 0,
-          speechPatterns: 0,
-          desires: 0,
-          boundaries: 0,
+          identityComponents: extraction.identityComponents,
+          physicalAttributes: extraction.physicalAttributes,
+          speechPatterns: extraction.speechPatterns,
+          desires: extraction.desires,
+          boundaries: extraction.boundaries,
+          personalityTraits: extraction.personalityTraits,
+          preferences: extraction.preferences,
+        },
+        summary: {
+          identityCount: extraction.identityComponents.length,
+          physicalCount: extraction.physicalAttributes.length,
+          speechCount: extraction.speechPatterns.length,
+          desireCount: extraction.desires.length,
+          boundaryCount: extraction.boundaries.length,
+          traitCount: extraction.personalityTraits.length,
+          preferenceCount: extraction.preferences.length,
         },
       };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
-        insights: {
-          identityComponents: 0,
-          physicalAttributes: 0,
-          speechPatterns: 0,
-          desires: 0,
-          boundaries: 0,
-        },
+        insights: null,
+        summary: null,
       };
     }
   }
@@ -945,7 +1129,6 @@ class PersonaMemoryMCPServer {
         data: {
           name: params.entityName,
           entityType: params.entityType,
-          description: params.description,
         },
       });
 
@@ -963,6 +1146,334 @@ class PersonaMemoryMCPServer {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
         entity: null,
+      };
+    }
+  }
+
+  private async handleAnalyzeContent(params: z.infer<typeof AnalyzeContentSchema>) {
+    try {
+      // Use existing BAML functions to analyze content
+      const [meaningfulness, significance, emotionAnalysis] = await Promise.all([
+        b.CheckContentMeaningfulness(params.content),
+        b.AssessContentSignificance(
+          params.content,
+          'user',
+          JSON.stringify({ personaId: params.personaId }),
+        ),
+        // Use AnalyzeEmotions instead of CheckEmotionalContent to eliminate redundancy
+        b.AnalyzeEmotions(params.content),
+      ]);
+
+      const analysisResult = {
+        success: true,
+        analysis: {
+          significance: significance.significanceScore,
+          emotionalWeight: significance.emotionalWeight,
+          personalRelevance: significance.personalRelevance,
+          isEmotional:
+            emotionAnalysis.primaryEmotions.length > 0 ||
+            emotionAnalysis.secondaryEmotions.length > 0,
+          meaningfulness: meaningfulness.isMeaningful,
+          factors: significance.factors,
+        },
+        recommendations: {
+          processingApproach: significance.significanceScore < 0.3 ? 'simple' : 'comprehensive',
+          suggestedTools: this.generateToolRecommendations(significance, {
+            hasEmotionalContent:
+              emotionAnalysis.primaryEmotions.length > 0 ||
+              emotionAnalysis.secondaryEmotions.length > 0,
+          }),
+          estimatedTime: significance.significanceScore < 0.3 ? '2-3s' : '10-15s',
+          priority:
+            significance.significanceScore > 0.7
+              ? 'high'
+              : significance.significanceScore > 0.3
+                ? 'medium'
+                : 'low',
+        },
+      };
+
+      return analysisResult;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        analysis: {
+          significance: 0.5,
+          emotionalWeight: 0.0,
+          personalRelevance: 0.0,
+          isEmotional: false,
+          meaningfulness: true,
+          factors: ['Analysis failed - defaulting to medium significance'],
+        },
+        recommendations: {
+          processingApproach: 'comprehensive',
+          suggestedTools: ['storeMemory'],
+          estimatedTime: '10-15s',
+          priority: 'medium',
+        },
+      };
+    }
+  }
+
+  private generateToolRecommendations(significance: any, emotional: any): string[] {
+    const tools: string[] = [];
+
+    // Primary recommendation is always storeMemory since it now does comprehensive processing
+    tools.push('storeMemory');
+
+    // Only suggest specialized tools for specific analysis needs
+    if (emotional.hasEmotionalContent && significance.significanceScore > 0.7) {
+      tools.push('extractEmotionalInsights');
+    }
+
+    if (significance.significanceScore > 0.7 && emotional.hasEmotionalContent) {
+      tools.push('detectRelationshipShift');
+    }
+
+    return tools;
+  }
+
+  private async handleStoreSimpleMemory(params: z.infer<typeof StoreSimpleMemorySchema>) {
+    try {
+      // Create a simple memory without full processing
+      const memory = await this.memoryFormation.createMultiModalMemory(
+        params.personaId,
+        params.content,
+        'text',
+        {
+          significance: 0.2, // Force low significance
+          skipEntityExtraction: true,
+          skipEmotionalAnalysis: true,
+        },
+      );
+
+      return {
+        success: true,
+        memory: {
+          id: memory.id,
+          content: memory.searchText || params.content,
+          memoryType: memory.memoryType,
+          significance: memory.significanceScore,
+          createdAt: memory.createdAt.toISOString(),
+        },
+        processingApproach: 'simple',
+        skippedAnalysis: ['persona', 'relationship', 'personality', 'emotional'],
+        message: 'Content stored with minimal processing for efficiency',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        processingApproach: 'simple',
+      };
+    }
+  }
+
+  private async handleStoreSignificantMemory(params: z.infer<typeof StoreSignificantMemorySchema>) {
+    try {
+      // Create memory with full analysis
+      const memory = await this.memoryFormation.createMultiModalMemory(
+        params.personaId,
+        params.content,
+        'text',
+        {
+          significance: params.significance,
+          channel: params.channel,
+          sessionId: params.sessionId,
+        },
+      );
+
+      // Automatically do persona extraction for significant memories
+      let personaInsights = null;
+      try {
+        const existingPersona = await this.personaBuilder.getExistingPersonaContext(params.personaId);
+        const extraction = await this.personaBuilder.contextAwareMultiPassExtraction(
+          params.content, 
+          existingPersona
+        );
+        await this.personaBuilder.saveExtractionResults(params.personaId, extraction);
+        
+        personaInsights = {
+          identityCount: extraction.identityComponents.length,
+          physicalCount: extraction.physicalAttributes.length,
+          speechCount: extraction.speechPatterns.length,
+          desireCount: extraction.desires.length,
+          boundaryCount: extraction.boundaries.length,
+          traitCount: extraction.personalityTraits.length,
+          preferenceCount: extraction.preferences.length,
+        };
+      } catch (error) {
+        console.warn('Persona extraction failed during storeSignificantMemory:', error);
+      }
+
+      return {
+        success: true,
+        memory: {
+          id: memory.id,
+          content: memory.searchText || params.content,
+          memoryType: memory.memoryType,
+          significance: memory.significanceScore,
+          createdAt: memory.createdAt.toISOString(),
+        },
+        personaUpdates: personaInsights,
+        processingApproach: 'comprehensive',
+        workflow: 'comprehensive with persona extraction',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        processingApproach: 'comprehensive',
+      };
+    }
+  }
+
+  private async handleExtractEmotionalInsights(
+    params: z.infer<typeof ExtractEmotionalInsightsSchema>,
+  ) {
+    try {
+      // Use PersonalityMonitorService to extract emotional observations
+      const observations = await this.personalityMonitor.extractObservations(
+        params.personaId,
+        params.content,
+        params.memoryId,
+      );
+
+      // Filter for emotional/vulnerability related observations
+      const emotionalObservations = observations.filter(
+        (obs) =>
+          obs.traitDimension.includes('vulnerability') ||
+          obs.traitDimension.includes('emotional') ||
+          obs.traitDimension.includes('anxiety') ||
+          obs.traitDimension.includes('trust'),
+      );
+
+      return {
+        success: true,
+        insights: {
+          emotionalObservations: emotionalObservations.length,
+          totalObservations: observations.length,
+          discoveredTraits: emotionalObservations.map((obs) => ({
+            traitDimension: obs.traitDimension,
+            observedValue: obs.observedValue,
+            confidence: obs.confidence,
+            situation: obs.situation,
+          })),
+        },
+        specializations: {
+          vulnerabilityPatterns: emotionalObservations.filter((obs) =>
+            obs.traitDimension.includes('vulnerability'),
+          ).length,
+          trustPatterns: emotionalObservations.filter((obs) => obs.traitDimension.includes('trust'))
+            .length,
+          anxietyPatterns: emotionalObservations.filter((obs) =>
+            obs.traitDimension.includes('anxiety'),
+          ).length,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        insights: {
+          emotionalObservations: 0,
+          totalObservations: 0,
+          discoveredTraits: [],
+        },
+      };
+    }
+  }
+
+  private async handleDetectRelationshipShift(
+    params: z.infer<typeof DetectRelationshipShiftSchema>,
+  ) {
+    try {
+      // Use RelationshipEvolutionService for intelligent analysis instead of hardcoded patterns
+      return await this.relationshipEvolution.analyzeRelationshipShift(
+        params.content,
+        params.personaId,
+        params.entityId,
+        params.memoryId,
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        detected: {
+          hasSignificantChange: false,
+          trustChange: 0,
+          intimacyChange: 0,
+          confidence: 0,
+          indicators: [],
+        },
+      };
+    }
+  }
+
+  private async handleUpdateEmotionalBond(params: z.infer<typeof UpdateEmotionalBondSchema>) {
+    try {
+      // Get existing relationship
+      const relationship = await this.prisma.relationship.findUnique({
+        where: {
+          personaId_entityId: {
+            personaId: params.personaId,
+            entityId: params.entityId,
+          },
+        },
+      });
+
+      if (!relationship) {
+        return {
+          success: false,
+          error: 'Relationship not found - use identifyEntity first',
+          bond: null,
+        };
+      }
+
+      // Update relationship using RelationshipEvolutionService
+      // Note: This would need to be implemented in RelationshipEvolutionService
+      const newTrustLevel = Math.max(0, Math.min(1, relationship.trustLevel + params.trustChange));
+      const newIntimacyLevel = Math.max(
+        0,
+        Math.min(1, relationship.intimacyLevel + params.intimacyChange),
+      );
+
+      await this.prisma.relationship.update({
+        where: { id: relationship.id },
+        data: {
+          trustLevel: newTrustLevel,
+          intimacyLevel: newIntimacyLevel,
+          lastInteraction: new Date(),
+        },
+      });
+
+      return {
+        success: true,
+        bond: {
+          previousTrust: relationship.trustLevel,
+          newTrust: newTrustLevel,
+          trustChange: params.trustChange,
+          previousIntimacy: relationship.intimacyLevel,
+          newIntimacy: newIntimacyLevel,
+          intimacyChange: params.intimacyChange,
+          reason: params.reason,
+          updatedAt: new Date().toISOString(),
+        },
+        analysis: {
+          bondStrength: (newTrustLevel + newIntimacyLevel) / 2,
+          progressDirection:
+            params.trustChange + params.intimacyChange > 0 ? 'strengthening' : 'weakening',
+          trustLevel: newTrustLevel > 0.7 ? 'high' : newTrustLevel > 0.4 ? 'moderate' : 'low',
+          intimacyLevel:
+            newIntimacyLevel > 0.7 ? 'high' : newIntimacyLevel > 0.4 ? 'moderate' : 'low',
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        bond: null,
       };
     }
   }
@@ -1024,16 +1535,101 @@ class PersonaMemoryMCPServer {
     }
   }
 
-  async run() {
-    const transport = new StdioServerTransport();
+  async run(mode: 'stdio' | 'http' = 'stdio', port = 3001) {
+    if (mode === 'stdio') {
+      const transport = new StdioServerTransport();
 
-    try {
-      await this.server.connect(transport);
-      this.log('info', 'Persona Memory MCP Server started successfully');
-      console.error('Persona Memory MCP Server running on stdio');
-    } catch (error) {
-      this.log('error', 'Failed to start MCP server', error);
-      throw error;
+      try {
+        await this.server.connect(transport);
+        this.log('info', 'Persona Memory MCP Server started successfully (stdio)');
+        console.error('Persona Memory MCP Server running on stdio');
+      } catch (error) {
+        this.log('error', 'Failed to start MCP server (stdio)', error);
+        throw error;
+      }
+    } else {
+      // HTTP mode with SSE transport
+      const app = express();
+
+      // Enable CORS for browser clients
+      app.use(cors());
+      app.use(express.json());
+
+      // Store transports by session ID
+      const transports: Record<string, SSEServerTransport> = {};
+
+      // Health check endpoint
+      app.get('/health', (req, res) => {
+        res.json({ status: 'ok', service: 'persona-memory-mcp' });
+      });
+
+      // SSE endpoint for establishing the stream
+      app.get('/mcp', async (req, res) => {
+        console.error('Establishing SSE stream...');
+        try {
+          // Create a new SSE transport for the client
+          const transport = new SSEServerTransport('/messages', res);
+
+          // Store the transport by session ID
+          const sessionId = transport.sessionId;
+          transports[sessionId] = transport;
+
+          // Set up onclose handler to clean up transport when closed
+          transport.onclose = () => {
+            console.error(`SSE transport closed for session ${sessionId}`);
+            delete transports[sessionId];
+          };
+
+          // Connect the transport to the MCP server
+          await this.server.connect(transport);
+          console.error(`Established SSE stream with session ID: ${sessionId}`);
+        } catch (error) {
+          console.error('Error establishing SSE stream:', error);
+          if (!res.headersSent) {
+            res.status(500).send('Error establishing SSE stream');
+          }
+        }
+      });
+
+      // Messages endpoint for receiving client JSON-RPC requests
+      app.post('/messages', async (req, res) => {
+        console.error('Received POST request to /messages');
+
+        // Extract session ID from URL query parameter
+        const sessionId = req.query.sessionId as string;
+        if (!sessionId) {
+          return res.status(400).send('Missing sessionId query parameter');
+        }
+
+        const transport = transports[sessionId];
+        if (!transport) {
+          return res.status(404).send('Session not found');
+        }
+
+        try {
+          await transport.handlePostMessage(req, res, req.body);
+        } catch (error) {
+          console.error('Error handling POST message:', error);
+          if (!res.headersSent) {
+            res.status(500).send('Error handling message');
+          }
+        }
+      });
+
+      const httpServer = app.listen(port, '0.0.0.0', () => {
+        this.log('info', `Persona Memory MCP Server started successfully (HTTP:${port})`);
+        console.error(`Persona Memory MCP Server running on http://localhost:${port}`);
+        console.error(`SSE endpoint: http://localhost:${port}/mcp`);
+        console.error(`Messages endpoint: http://localhost:${port}/messages`);
+      });
+
+      // Graceful shutdown
+      process.on('SIGINT', async () => {
+        console.error('Shutting down HTTP MCP server...');
+        httpServer.close();
+        await this.close();
+        process.exit(0);
+      });
     }
   }
 
@@ -1046,12 +1642,19 @@ class PersonaMemoryMCPServer {
 if (require.main === module) {
   const server = new PersonaMemoryMCPServer();
 
-  process.on('SIGINT', async () => {
-    await server.close();
-    process.exit(0);
-  });
+  // Check for HTTP mode via environment variable or argument
+  const mode =
+    process.env.MCP_MODE === 'http' || process.argv.includes('--http') ? 'http' : 'stdio';
+  const port = Number.parseInt(process.env.MCP_PORT || '3001');
 
-  server.run().catch((error) => {
+  if (mode === 'stdio') {
+    process.on('SIGINT', async () => {
+      await server.close();
+      process.exit(0);
+    });
+  }
+
+  server.run(mode, port).catch((error) => {
     console.error('Failed to run server:', error);
     process.exit(1);
   });

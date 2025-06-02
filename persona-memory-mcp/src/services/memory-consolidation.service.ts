@@ -718,7 +718,7 @@ export class MemoryConsolidationService {
     // Analyze reactivation requirements
     const consolidatedMemories = stateTransitions
       .filter((m) => m.consolidationState === 'consolidated' && m.consolidation)
-      .map((m) => m.consolidation!.reactivationCount);
+      .map((m) => m.consolidation?.reactivationCount);
     const minimumReactivationsForConsolidation =
       consolidatedMemories.length > 0
         ? Math.min(...consolidatedMemories.filter((c) => c > 0)) || 2
@@ -1063,7 +1063,7 @@ export class MemoryConsolidationService {
       }
 
       const windowDurationMs = windowDurationHours * 60 * 60 * 1000;
-      const windowAge = now.getTime() - consolidation.windowOpenedAt!.getTime();
+      const windowAge = now.getTime() - consolidation.windowOpenedAt?.getTime();
 
       if (windowAge > windowDurationMs) {
         await this.prisma.memoryConsolidation.update({

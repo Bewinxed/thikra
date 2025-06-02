@@ -2,7 +2,7 @@
 // LLM-driven decision making for which tools to use and in what order
 
 function PlanGranularProcessing(content: string, context: GranularContext) -> GranularPlan {
-  client OpenRouterHaiku
+  client LargeModelFallback
   prompt #"
     You are an intelligent agent deciding how to process a message using granular persona memory tools.
     
@@ -39,7 +39,7 @@ function DecideNextAction(
   completedActions: string[],
   intermediateResults: ActionResult[]
 ) -> NextActionDecision {
-  client OpenRouterHaiku
+  client LargeModelFallback
   prompt #"
     You are continuing to execute a granular processing plan. Based on what's been done
     and the results so far, decide what to do next.
@@ -64,7 +64,7 @@ function EvaluateGranularResults(
   originalMessage: string,
   processingTime: int
 ) -> GranularEvaluation {
-  client OpenRouterHaiku
+  client LargeModelFallback
   prompt #"
     Evaluate the effectiveness of this granular processing approach.
     
