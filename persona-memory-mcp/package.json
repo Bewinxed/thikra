@@ -15,8 +15,6 @@
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
     "personas": "bun run process-personality-definitions.ts",
-    "personas:test": "bun run test-intimacy-escalation.ts --messages 1",
-    "personas:test:full": "bun run test-intimacy-escalation.ts --messages 3",
     "personas:reactions": "bun run process-personality-definitions.ts --test-reactions",
     "personas:dir": "bun run process-personality-definitions.ts --dir",
     "lint": "biome check .",

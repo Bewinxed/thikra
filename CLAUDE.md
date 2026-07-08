@@ -54,7 +54,7 @@ bun db:studio        # Open Prisma Studio for database visualization
 ```bash
 bun test                                    # Run all tests
 bun test --timeout 60000                   # Run with 60s timeout for BAML calls
-bun test aria-preservation.test.ts         # Run specific test
+bun test persona-builder.service.test.ts   # Run specific test
 ```
 
 ### Code Quality
@@ -81,7 +81,7 @@ bun test             # Run tests using Bun test runner
 - ✅ StateManagement: Dynamic KV store for any state LLM references
 - ✅ MemoryGraph: PostgreSQL-optimized bidirectional associations
 - ✅ AgenticRetrieval: 5-strategy multi-pass memory search with reflection
-- ✅ Aria preservation test passing (demonstrates complete persona capture)
+- ✅ Persona preservation tests passing (demonstrates complete persona capture)
 
 **CRITICAL MISSING (BASED ON USER REQUIREMENTS):**
 
